@@ -13,8 +13,14 @@ const app = express();
 // Enable CORS for all origins (adjust for production)
 app.use(cors()); 
 
-// Parse JSON request bodies for other routes (this should now apply globally first)
-app.use(express.json());
+// IMPORTANT: Apply raw body parser specifically for the webhook route FIRST
+app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
+    console.log('Raw body middleware for /api/paypal/webhook executed.');
+    next();
+});
+
+// Parse JSON request bodies for all other routes AFTER the raw parser for webhook
+app.use(express.json()); 
 
 // --- Routes ---
 app.get('/', (req, res) => {
@@ -24,8 +30,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/youtube', youtubeRoutes);
-// Let paypalRoutes handle its own body parsing for the webhook
-app.use('/api/paypal', paypalRoutes);
+app.use('/api/paypal', paypalRoutes); // This router will now receive the raw body for /webhook
 
 // --- Error Handling ---
 app.use(errorHandler);
