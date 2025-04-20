@@ -111,9 +111,13 @@ const LandingPage: React.FC = () => {
       <header className="fixed top-8 z-50 px-4 w-full flex justify-center">
         {/* Background/blur applied back to nav */}
         <nav className="flex items-center justify-center gap-10 bg-trendy-brown/70 backdrop-blur-md rounded-[18px] shadow-lg shadow-black/30 p-3 border border-neutral-700/50 max-w-fit">
-          <a href="#home" className="flex items-center gap-2">
-             {/* Corrected logo path to be relative to public */}
-             <img src="/Design/500x500 Logo's/Object Logo.png" alt="Trendy.bot Logo" className="h-8 w-auto" /> 
+          <a
+            href="#home"
+            rel="noopener noreferrer"
+            className="flex items-center space-x-2"
+          >
+            <img src="/Design/500x500-logos/Object Logo.png" alt="Trendy.bot Logo" className="h-8 w-auto" />
+            <span className="font-orbitron font-bold text-2xl text-white">trendy</span>
           </a>
           <div className="flex gap-8 items-center font-orbitron text-sm">
             {/* Light text links, yellow hover */}
@@ -496,7 +500,7 @@ const LandingPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
             {/* Column 1: Logo and Description */}
             <div className="md:col-span-1 flex flex-col items-center md:items-start text-center md:text-left">
-              <img src="/Design/500x500 Logo's/Object Logo.png" alt="Trendy.bot Logo" className="h-12 w-auto mb-4" />
+              <img src="/Design/500x500-logos/Object Logo.png" alt="Trendy.bot Logo" className="h-12 w-auto mb-4" />
               <p className="text-sm leading-relaxed">
                 Real-time YouTube Shorts trend detection to help creators and marketers grow faster.
               </p>

@@ -11,7 +11,7 @@ export const Logo: React.FC<LogoProps> = ({ className, iconOnly = false, large =
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <div className={cn("flex-shrink-0", large ? "h-12 w-12" : "h-8 w-8")}>
-        <img src="/Design/500x500 Logo's/Object Logo.png" alt="Trendy.bot Logo" className="w-full h-full object-contain yellow-glow" />
+        <img src="/Design/500x500-logos/Object Logo.png" alt="Trendy.bot Logo" className="w-full h-full object-contain yellow-glow" />
       </div>
       {!iconOnly && (
         <span className={cn("font-bold text-foreground tracking-wider", large ? "text-3xl" : "text-xl")}>TRENDY</span>
