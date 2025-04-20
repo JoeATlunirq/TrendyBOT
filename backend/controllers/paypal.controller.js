@@ -1,6 +1,10 @@
 const NocoDBService = require('../services/nocodb.service');
-const paypalClient = require('../config/paypalClient'); // Import the configured client (now using axios)
-const paypal = require('@paypal/paypal-server-sdk'); // Still need SDK for verification
+const paypalClient = require('../config/paypalClient'); // Import the configured client (axios implementation)
+// SDK still potentially needed for other things, but not primary verification
+const paypal = require('@paypal/paypal-server-sdk'); 
+const crypto = require('crypto'); // Required for manual verification
+const https = require('https'); // Required to fetch certificate
+const crc32 = require('crc/crc32'); // Required for CRC32 checksum
 
 // Destructure specific webhook verification methods if available (or use direct SDK object)
 // Assuming the verification methods might be directly available
@@ -8,6 +12,9 @@ const paypal = require('@paypal/paypal-server-sdk'); // Still need SDK for verif
 
 // Get PayPal Webhook ID from environment
 const PAYPAL_WEBHOOK_ID = process.env.PAYPAL_WEBHOOK_ID;
+
+// Expected PayPal certificate CNs (adjust if necessary based on PayPal docs)
+const PAYPAL_CERT_CNS = ['*.paypal.com', '*.paypalcorp.com'];
 
 // Destructure column names from environment variables
 const { 
@@ -103,6 +110,17 @@ const approveSubscription = async (req, res, next) => {
     }
 };
 
+// Helper function to fetch the certificate from PayPal
+const getPayPalCert = (certUrl) => {
+    return new Promise((resolve, reject) => {
+        https.get(certUrl, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => resolve(data));
+        }).on('error', (err) => reject(err));
+    });
+};
+
 /**
  * @desc    Handle incoming PayPal webhook events
  * @route   POST /api/paypal/webhook
@@ -111,65 +129,73 @@ const approveSubscription = async (req, res, next) => {
 const handleWebhook = async (req, res, next) => {
     console.log('PayPal Webhook Received');
     
-    // --- Step 1: Verify Webhook Signature --- 
     const headers = req.headers;
-    // Get the raw body Buffer directly from req.body
-    const rawBody = req.body;
+    const rawBody = req.body; // Expecting raw Buffer
     let eventBody;
 
+    // --- Check prerequisites ---
     if (!PAYPAL_WEBHOOK_ID) {
         console.error('FATAL: PAYPAL_WEBHOOK_ID environment variable not set!');
         return res.status(500).send('Webhook ID configuration error');
     }
-    // Verify that req.body is a Buffer, as expected from express.raw()
     if (!rawBody || !Buffer.isBuffer(rawBody)) {
          console.error('Webhook Error: Raw body not available or not a Buffer on request object.');
-         console.log('Type of req.body:', typeof rawBody, 'Value:', rawBody); // Log type and value
          return res.status(400).send('Bad Request: Missing or invalid raw body');
+    }
+    const transmissionId = headers['paypal-transmission-id'];
+    const transmissionTime = headers['paypal-transmission-time'];
+    const transmissionSig = headers['paypal-transmission-sig'];
+    const certUrl = headers['paypal-cert-url'];
+    const authAlgo = headers['paypal-auth-algo'];
+
+    if (!transmissionId || !transmissionTime || !transmissionSig || !certUrl || !authAlgo) {
+        console.error('Webhook Error: Missing required PayPal headers for verification.');
+        return res.status(400).send('Bad Request: Missing verification headers');
     }
 
     try {
-        // Parse the buffer to JSON
-        const bodyString = rawBody.toString('utf8'); 
-        console.log('Raw Body String:', bodyString); // Log the string before parsing
-        eventBody = JSON.parse(bodyString); 
-        console.log('Attempting to verify webhook signature...');
-
-        // Construct the verification request parameters
-        const verificationParams = {
-            authAlgo: headers['paypal-auth-algo'],
-            certUrl: headers['paypal-cert-url'],
-            transmissionId: headers['paypal-transmission-id'],
-            transmissionSig: headers['paypal-transmission-sig'],
-            transmissionTime: headers['paypal-transmission-time'],
-            webhookId: PAYPAL_WEBHOOK_ID,
-            webhookEvent: eventBody // Use the parsed event body 
-        };
-
-        // --- Attempt Real Verification --- 
-        console.log('Using SDK for verification with params:', Object.keys(verificationParams)); 
+        console.log('Attempting MANUAL webhook signature verification...');
         
-        // Check if the verification function exists before calling
-        if (paypal.webhooks && typeof paypal.webhooks.verifyWebhookSignature === 'function') {
-             const verificationResult = await paypal.webhooks.verifyWebhookSignature(verificationParams);
-             const verificationStatus = verificationResult.verification_status; // Extract status
-             console.log('Webhook Verification Status:', verificationStatus);
-    
-             if (verificationStatus !== 'SUCCESS') {
-                 console.error('Webhook verification failed:', verificationStatus);
-                 return res.status(400).send('Webhook verification failed');
-             }
-        } else {
-             // Fallback or error if the function doesn't exist as expected
-             console.error('ERROR: paypal.webhooks.verifyWebhookSignature function not found on SDK object!');
-             // TODO: Implement manual verification or investigate SDK structure further
-             // For now, fail verification if function is missing
-             return res.status(500).send('Webhook verification method not available');
-        }
-       
-        console.log('Webhook signature verified successfully.');
+        // --- Step 1: Fetch PayPal Certificate --- 
+        const certPem = await getPayPalCert(certUrl);
+        const certificate = new crypto.X509Certificate(certPem);
+        const publicKey = certificate.publicKey;
 
-        // --- Step 2: Process Verified Event --- 
+        // --- Step 2: Verify Certificate (Basic CN Check) --- 
+        // More robust chain validation could be added if needed
+        const subjectCN = certificate.subject.split('CN=')[1];
+        const isCertValid = PAYPAL_CERT_CNS.some(cn => {
+            if (cn.startsWith('*.')) {
+                return subjectCN.endsWith(cn.substring(1));
+            } 
+            return subjectCN === cn;
+        });
+
+        if (!isCertValid) {
+             console.error(`Webhook Error: Certificate CN (${subjectCN}) does not match expected PayPal domains.`);
+             return res.status(400).send('Invalid certificate');
+        }
+        console.log(`Certificate CN (${subjectCN}) validated.`);
+
+        // --- Step 3: Construct Signature String --- 
+        const bodyString = rawBody.toString('utf8');
+        const crc32Checksum = crc32(bodyString).toString(16); // Calculate CRC32 checksum
+        const expectedSignature = `${transmissionId}|${transmissionTime}|${PAYPAL_WEBHOOK_ID}|${crc32Checksum}`;
+        console.log('Constructed signature string for verification.');
+
+        // --- Step 4: Verify Signature --- 
+        const verifier = crypto.createVerify(authAlgo.replace("with", "-")); // e.g., SHA256-RSA
+        verifier.update(expectedSignature);
+        const isSignatureValid = verifier.verify(publicKey, transmissionSig, 'base64');
+
+        if (!isSignatureValid) {
+            console.error('Webhook Error: Signature verification failed.');
+            return res.status(400).send('Invalid signature');
+        }
+        console.log('Webhook signature verified successfully (MANUAL).');
+
+        // --- Step 5: Process Verified Event --- 
+        eventBody = JSON.parse(bodyString); // Parse body now that it's verified
         const eventType = eventBody.event_type;
         console.log(`Received verified event type: ${eventType}`);
 
@@ -183,35 +209,33 @@ const handleWebhook = async (req, res, next) => {
             }
             console.log(`Subscription ID to cancel: ${cancelledSubscriptionId}`);
 
-            // --- Step 3: Find User in NocoDB --- 
+            // Find User in NocoDB 
             const user = await NocoDBService.findUserBySubscriptionId(cancelledSubscriptionId);
 
             if (!user) {
                 console.warn(`Received cancellation webhook for subscription ${cancelledSubscriptionId}, but no matching user found in DB.`);
-                // Still return 200 OK to PayPal, as the event itself was valid
                 return res.status(200).send('Webhook received, user not found');
             }
             console.log(`Found user ${user.Id} for cancelled subscription ${cancelledSubscriptionId}`);
 
-            // --- Step 4: Update User in NocoDB --- 
+            // Update User in NocoDB
             const dataToUpdate = {
-                [NOCODB_CURRENT_PLAN_COLUMN || 'current_plan']: null, // Set plan to null or empty string
+                [NOCODB_CURRENT_PLAN_COLUMN || 'current_plan']: null, 
                 [NOCODB_SUB_STATUS_COLUMN || 'subscription_status']: 'CANCELLED'
             };
             console.log(`Updating user ${user.Id} with data:`, dataToUpdate);
             await NocoDBService.updateUser(user.Id, dataToUpdate);
             console.log(`User ${user.Id} successfully updated for cancellation.`);
         } 
-        // TODO: Add handlers for other relevant events (e.g., PAYMENT.SALE.COMPLETED, BILLING.SUBSCRIPTION.ACTIVATED, etc.)
         else {
             console.log(`Ignoring unhandled event type: ${eventType}`);
         }
 
-        // --- Step 5: Respond to PayPal --- 
+        // --- Step 6: Respond to PayPal --- 
         res.status(200).send('Webhook received successfully');
 
     } catch (error) {
-        console.error('Webhook Handler Error (Parsing/Verification/Processing):', error);
+        console.error('Webhook Handler Error (Manual Verification/Processing):', error);
         res.status(500).send('Webhook processing error');
     }
 };
