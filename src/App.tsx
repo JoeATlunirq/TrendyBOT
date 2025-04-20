@@ -24,6 +24,9 @@ import NotificationSettings from "@/pages/NotificationSettings";
 // Layout
 import { DashboardLayout } from "@/components/DashboardLayout";
 
+// Environment Variable for Onboarding Column Name
+const ONBOARDING_COLUMN_NAME = import.meta.env.VITE_ONBOARDING_COLUMN || 'onboarding_complete';
+
 const queryClient = new QueryClient();
 
 // Protected route wrapper
@@ -37,28 +40,25 @@ const ProtectedRoute = () => {
   return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
 };
 
-// OnboardingRoute - Renders Onboarding only if user is authenticated
-// (The decision to *send* them here is made in AuthContext)
+// OnboardingRoute - Renders Onboarding only if user is authenticated AND has NOT completed onboarding
 const OnboardingRoute = () => {
-  // const { user, isLoading } = useAuth(); // No longer need user directly
-  const { isAuthenticated, isLoading } = useAuth(); // Check authentication status
+  const { user, isAuthenticated, isLoading } = useAuth(); // Now need user object too
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
-
-  // If user exists but isn't a new user, redirect to dashboard
-  // if (user && !user.isNewUser) {
-  //   return <Navigate to="/trending" replace />;
-  // }
 
   // If not authenticated, redirect to login
   if (!isAuthenticated) {
       return <Navigate to="/login" replace />;
   }
 
-  // If user is authenticated, allow rendering the nested route (Onboarding page)
-  // AuthContext should have already determined they need onboarding.
+  // If authenticated AND onboarding is complete, redirect to dashboard
+  if (user && user[ONBOARDING_COLUMN_NAME] === true) {
+     return <Navigate to="/trending" replace />;
+  }
+
+  // If user is authenticated AND onboarding is NOT complete, render Onboarding page
   return <Outlet />;
 };
 
