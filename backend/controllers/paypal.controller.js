@@ -113,20 +113,26 @@ const handleWebhook = async (req, res, next) => {
     
     // --- Step 1: Verify Webhook Signature --- 
     const headers = req.headers;
-    const rawBody = req.rawBody;
+    // Get the raw body Buffer directly from req.body
+    const rawBody = req.body;
     let eventBody;
 
     if (!PAYPAL_WEBHOOK_ID) {
         console.error('FATAL: PAYPAL_WEBHOOK_ID environment variable not set!');
         return res.status(500).send('Webhook ID configuration error');
     }
-    if (!rawBody) {
-         console.error('Webhook Error: Raw body not available on request object.');
-         return res.status(400).send('Bad Request: Missing raw body');
+    // Verify that req.body is a Buffer, as expected from express.raw()
+    if (!rawBody || !Buffer.isBuffer(rawBody)) {
+         console.error('Webhook Error: Raw body not available or not a Buffer on request object.');
+         console.log('Type of req.body:', typeof rawBody, 'Value:', rawBody); // Log type and value
+         return res.status(400).send('Bad Request: Missing or invalid raw body');
     }
 
     try {
-        eventBody = JSON.parse(rawBody.toString()); // Parse body early for verification
+        // Parse the buffer to JSON
+        const bodyString = rawBody.toString('utf8'); 
+        console.log('Raw Body String:', bodyString); // Log the string before parsing
+        eventBody = JSON.parse(bodyString); 
         console.log('Attempting to verify webhook signature...');
 
         // Construct the verification request parameters
@@ -137,7 +143,7 @@ const handleWebhook = async (req, res, next) => {
             transmissionSig: headers['paypal-transmission-sig'],
             transmissionTime: headers['paypal-transmission-time'],
             webhookId: PAYPAL_WEBHOOK_ID,
-            webhookEvent: eventBody 
+            webhookEvent: eventBody // Use the parsed event body 
         };
 
         // --- Attempt Real Verification --- 
@@ -205,7 +211,7 @@ const handleWebhook = async (req, res, next) => {
         res.status(200).send('Webhook received successfully');
 
     } catch (error) {
-        console.error('Webhook Handler Error:', error);
+        console.error('Webhook Handler Error (Parsing/Verification/Processing):', error);
         res.status(500).send('Webhook processing error');
     }
 };

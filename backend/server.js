@@ -13,7 +13,7 @@ const app = express();
 // Enable CORS for all origins (adjust for production)
 app.use(cors()); 
 
-// Parse JSON request bodies
+// Parse JSON request bodies for other routes (this should now apply globally first)
 app.use(express.json());
 
 // --- Routes ---
@@ -24,6 +24,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/youtube', youtubeRoutes);
+// Let paypalRoutes handle its own body parsing for the webhook
 app.use('/api/paypal', paypalRoutes);
 
 // --- Error Handling ---
