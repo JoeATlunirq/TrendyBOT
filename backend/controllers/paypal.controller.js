@@ -1,7 +1,13 @@
 const NocoDBService = require('../services/nocodb.service');
-const paypalClient = require('../config/paypalClient'); // Import the configured client (now a mock)
-// Remove the import for paypal - we're using the mock client
-// const paypal = require('@paypal/paypal-server-sdk'); 
+const paypalClient = require('../config/paypalClient'); // Import the configured client (now using axios)
+const paypal = require('@paypal/paypal-server-sdk'); // Still need SDK for verification
+
+// Destructure specific webhook verification methods if available (or use direct SDK object)
+// Assuming the verification methods might be directly available
+// const { verifyWebhookSignature } = paypal.webhooks; // Adjust path if needed based on SDK structure
+
+// Get PayPal Webhook ID from environment
+const PAYPAL_WEBHOOK_ID = process.env.PAYPAL_WEBHOOK_ID;
 
 // Destructure column names from environment variables
 const { 
@@ -97,8 +103,114 @@ const approveSubscription = async (req, res, next) => {
     }
 };
 
-// TODO: Add webhook handler function
+/**
+ * @desc    Handle incoming PayPal webhook events
+ * @route   POST /api/paypal/webhook
+ * @access  Public (Verification required)
+ */
+const handleWebhook = async (req, res, next) => {
+    console.log('PayPal Webhook Received');
+    
+    // --- Step 1: Verify Webhook Signature --- 
+    const headers = req.headers;
+    const rawBody = req.rawBody;
+    let eventBody;
+
+    if (!PAYPAL_WEBHOOK_ID) {
+        console.error('FATAL: PAYPAL_WEBHOOK_ID environment variable not set!');
+        return res.status(500).send('Webhook ID configuration error');
+    }
+    if (!rawBody) {
+         console.error('Webhook Error: Raw body not available on request object.');
+         return res.status(400).send('Bad Request: Missing raw body');
+    }
+
+    try {
+        eventBody = JSON.parse(rawBody.toString()); // Parse body early for verification
+        console.log('Attempting to verify webhook signature...');
+
+        // Construct the verification request parameters
+        const verificationParams = {
+            authAlgo: headers['paypal-auth-algo'],
+            certUrl: headers['paypal-cert-url'],
+            transmissionId: headers['paypal-transmission-id'],
+            transmissionSig: headers['paypal-transmission-sig'],
+            transmissionTime: headers['paypal-transmission-time'],
+            webhookId: PAYPAL_WEBHOOK_ID,
+            webhookEvent: eventBody 
+        };
+
+        // --- Attempt Real Verification --- 
+        console.log('Using SDK for verification with params:', Object.keys(verificationParams)); 
+        
+        // Check if the verification function exists before calling
+        if (paypal.webhooks && typeof paypal.webhooks.verifyWebhookSignature === 'function') {
+             const verificationResult = await paypal.webhooks.verifyWebhookSignature(verificationParams);
+             const verificationStatus = verificationResult.verification_status; // Extract status
+             console.log('Webhook Verification Status:', verificationStatus);
+    
+             if (verificationStatus !== 'SUCCESS') {
+                 console.error('Webhook verification failed:', verificationStatus);
+                 return res.status(400).send('Webhook verification failed');
+             }
+        } else {
+             // Fallback or error if the function doesn't exist as expected
+             console.error('ERROR: paypal.webhooks.verifyWebhookSignature function not found on SDK object!');
+             // TODO: Implement manual verification or investigate SDK structure further
+             // For now, fail verification if function is missing
+             return res.status(500).send('Webhook verification method not available');
+        }
+       
+        console.log('Webhook signature verified successfully.');
+
+        // --- Step 2: Process Verified Event --- 
+        const eventType = eventBody.event_type;
+        console.log(`Received verified event type: ${eventType}`);
+
+        if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
+            console.log('Processing BILLING.SUBSCRIPTION.CANCELLED event...');
+            const cancelledSubscriptionId = eventBody.resource?.id;
+            
+            if (!cancelledSubscriptionId) {
+                console.error('Could not extract subscription ID from CANCELLED event resource.');
+                return res.status(400).send('Malformed cancellation event');
+            }
+            console.log(`Subscription ID to cancel: ${cancelledSubscriptionId}`);
+
+            // --- Step 3: Find User in NocoDB --- 
+            const user = await NocoDBService.findUserBySubscriptionId(cancelledSubscriptionId);
+
+            if (!user) {
+                console.warn(`Received cancellation webhook for subscription ${cancelledSubscriptionId}, but no matching user found in DB.`);
+                // Still return 200 OK to PayPal, as the event itself was valid
+                return res.status(200).send('Webhook received, user not found');
+            }
+            console.log(`Found user ${user.Id} for cancelled subscription ${cancelledSubscriptionId}`);
+
+            // --- Step 4: Update User in NocoDB --- 
+            const dataToUpdate = {
+                [NOCODB_CURRENT_PLAN_COLUMN || 'current_plan']: null, // Set plan to null or empty string
+                [NOCODB_SUB_STATUS_COLUMN || 'subscription_status']: 'CANCELLED'
+            };
+            console.log(`Updating user ${user.Id} with data:`, dataToUpdate);
+            await NocoDBService.updateUser(user.Id, dataToUpdate);
+            console.log(`User ${user.Id} successfully updated for cancellation.`);
+        } 
+        // TODO: Add handlers for other relevant events (e.g., PAYMENT.SALE.COMPLETED, BILLING.SUBSCRIPTION.ACTIVATED, etc.)
+        else {
+            console.log(`Ignoring unhandled event type: ${eventType}`);
+        }
+
+        // --- Step 5: Respond to PayPal --- 
+        res.status(200).send('Webhook received successfully');
+
+    } catch (error) {
+        console.error('Webhook Handler Error:', error);
+        res.status(500).send('Webhook processing error');
+    }
+};
 
 module.exports = {
     approveSubscription,
+    handleWebhook, // Export the new function
 }; 
