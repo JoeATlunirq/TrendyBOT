@@ -1,4 +1,5 @@
-const paypal = require('@paypal/paypal-server-sdk');
+const paypalSdk = require('@paypal/paypal-server-sdk');
+const core = paypalSdk.core; // Explicitly get the core components
 
 // Get PayPal environment variables
 const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -17,14 +18,14 @@ if (!clientSecret || clientSecret.startsWith('PLACEHOLDER')) {
 // Set up PayPal environment
 let environment;
 if (mode === 'live') {
-    environment = new paypal.core.LiveEnvironment(clientId, clientSecret);
+    environment = new core.LiveEnvironment(clientId, clientSecret); // Use the extracted core object
     console.log('PayPal Client: Using LIVE environment.');
 } else {
-    environment = new paypal.core.SandboxEnvironment(clientId, clientSecret);
+    environment = new core.SandboxEnvironment(clientId, clientSecret); // Use the extracted core object
     console.log('PayPal Client: Using SANDBOX environment.');
 }
 
 // Create PayPal HTTP client instance
-const paypalClient = new paypal.core.PayPalHttpClient(environment);
+const paypalClient = new core.PayPalHttpClient(environment); // Use the extracted core object
 
 module.exports = paypalClient; 
