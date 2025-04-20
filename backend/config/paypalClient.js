@@ -1,7 +1,5 @@
-const paypalSdk = require('@paypal/paypal-server-sdk');
-console.log('paypalSdk imported:', typeof paypalSdk, Object.keys(paypalSdk || {})); // Log the imported object type and keys
-// const core = paypalSdk.core; // Remove this line as core is undefined
-// console.log('paypalSdk.core:', typeof core, Object.keys(core || {})); 
+// Import specific components using destructuring
+const { LiveEnvironment, SandboxEnvironment, PayPalHttpClient } = require('@paypal/paypal-server-sdk');
 
 // Get PayPal environment variables
 const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -22,20 +20,20 @@ let environment;
 console.log(`Attempting to create environment with mode: ${mode}`); // Log before creating environment
 if (mode === 'live') {
     console.log('Creating LiveEnvironment...'); // Log before new LiveEnvironment
-    // Try accessing via paypalSdk.Environment
-    environment = new paypalSdk.Environment.LiveEnvironment(clientId, clientSecret); 
+    // Use the directly imported constructor
+    environment = new LiveEnvironment(clientId, clientSecret);
     console.log('PayPal Client: Using LIVE environment.');
 } else {
     console.log('Creating SandboxEnvironment...'); // Log before new SandboxEnvironment
-    // Try accessing via paypalSdk.Environment
-    environment = new paypalSdk.Environment.SandboxEnvironment(clientId, clientSecret); 
+    // Use the directly imported constructor
+    environment = new SandboxEnvironment(clientId, clientSecret);
     console.log('PayPal Client: Using SANDBOX environment.');
 }
 
 // Create PayPal HTTP client instance
 console.log('Creating PayPalHttpClient...'); // Log before creating client
-// Try accessing via paypalSdk.Client
-const paypalClient = new paypalSdk.Client.PayPalHttpClient(environment); 
+// Use the directly imported constructor
+const paypalClient = new PayPalHttpClient(environment);
 console.log('PayPalHttpClient created successfully.'); // Log after creating client
 
 module.exports = paypalClient; 
