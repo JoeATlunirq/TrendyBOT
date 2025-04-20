@@ -1,5 +1,5 @@
 const express = require('express');
-const { approveSubscription } = require('../controllers/paypal.controller');
+const { approveSubscription, handleWebhook } = require('../controllers/paypal.controller');
 const { protect } = require('../middleware/auth.middleware');
 
 const router = express.Router();
@@ -9,6 +9,12 @@ const router = express.Router();
 // @access  Private
 router.post('/approve-subscription', protect, approveSubscription);
 
-// TODO: Add route for PayPal webhook handler POST /api/paypal/webhook
+// @route   POST /api/paypal/webhook
+// @desc    Handle incoming PayPal webhook notifications
+// @access  Public (Needs verification built-in)
+router.post('/webhook', (req, res, next) => {
+  console.log('>>> POST /api/paypal/webhook ROUTE HIT <<<');
+  next();
+}, handleWebhook);
 
 module.exports = router; 
