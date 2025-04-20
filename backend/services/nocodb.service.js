@@ -13,6 +13,7 @@ const {
     NOCODB_NOTIF_EMAIL_COLUMN,
     NOCODB_NOTIF_TELEGRAM_COLUMN,
     NOCODB_NOTIF_DISCORD_COLUMN,
+    NOCODB_PAYPAL_SUB_ID_COLUMN,
     // NOCODB_TRACKED_CHANNELS_COLUMN // Uncomment if needed
 } = process.env;
 
@@ -152,9 +153,49 @@ const getUserRecordById = async (userId) => {
     }
 };
 
+/**
+ * Finds a user record in NocoDB by their PayPal Subscription ID.
+ * @param {string} subscriptionId - The PayPal Subscription ID to search for.
+ * @returns {Promise<object|null>} The user object if found, otherwise null.
+ */
+const findUserBySubscriptionId = async (subscriptionId) => {
+    const subIdColumn = NOCODB_PAYPAL_SUB_ID_COLUMN || 'paypal_subscription_id'; // Default column name
+    if (!subscriptionId) {
+        console.error('findUserBySubscriptionId called without subscriptionId');
+        return null;
+    }
+    
+    const params = {
+        where: `(${subIdColumn},eq,${subscriptionId})`,
+        limit: 1
+    };
+
+    try {
+        console.log(`Attempting to find user with PayPal Sub ID: ${subscriptionId} using column: ${subIdColumn}`);
+        const response = await nocoAxios.get('/records', { params });
+        console.log('NocoDB findUserBySubscriptionId response:', response.data);
+
+        if (response.data?.list && response.data.list.length > 0) {
+            return response.data.list[0]; // Return the user found
+        } else {
+            console.log(`User with PayPal Sub ID ${subscriptionId} not found.`);
+            return null; // User not found
+        }
+    } catch (error) {
+        if (error.response && error.response.status !== 404) {
+             handleNocoError(error, 'find user by subscription ID');
+        } else if (!error.response) {
+             handleNocoError(error, 'find user by subscription ID');
+        }
+        console.log(`Error finding user by subscription ID ${subscriptionId}, likely not found.`);
+        return null; 
+    }
+};
+
 module.exports = {
     findUserByEmail,
     createUser,
     updateUser,
     getUserRecordById,
+    findUserBySubscriptionId,
 }; 
