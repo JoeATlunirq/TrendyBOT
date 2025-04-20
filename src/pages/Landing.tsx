@@ -17,7 +17,7 @@ import figmaUser2 from "@/assets/figma/f83c9nwlZghmsOqr5KiPD7NpS1I.png";
 import figmaUser3 from "@/assets/figma/UaeMNaCCtVrxQXhyIzZB7ihAs.png";
 import figmaTestimonial1 from "@/assets/figma/YkpUok2fGo3ld57plHxrpJnqs.jpg";
 import figmaTestimonial2 from "@/assets/figma/yQgwOMluRZbGnTNDvxzNruhpY0.jpg";
-import figmaTestimonial3 from "@/assets/figma/rWhc7kSjY60xoaZdt0mdcw3KjuQ.jpg"; // Ensure this exists
+// import figmaTestimonial3 from "@/assets/figma/rWhc7kSjY60xoaZdt0mdcw3KjuQ.jpg"; // Commented out - File missing
 import vector703 from "@/assets/figma/Vector_1_703.svg";
 import vector690 from "@/assets/figma/Vector_1_690.svg";
 import vector709 from "@/assets/figma/Vector_1_709.svg";
@@ -39,10 +39,10 @@ const LandingPage: React.FC = () => {
   const testimonialsData = [
     { quote: "Trendy.bot is my secret weapon for Shorts! Knowing what's popping off instantly helps me jump on trends way faster than before.", name: "Samantha Collins", designation: "Shorts Creator", src: figmaTestimonial1 },
     { quote: "No more guessing game for my Shorts content. The alerts are spot-on for my niche, helping me create relevant videos that actually get views.", name: "David Nguyen", designation: "Tech Reviewer (Shorts)", src: figmaTestimonial2 },
-    { quote: "This tool understands the *speed* of Shorts trends. The instant alerts are a game-changer for staying relevant and capturing viral waves.", name: "Emily Johnson", designation: "Social Media Strategist", src: figmaTestimonial3 },
+    { quote: "This tool understands the *speed* of Shorts trends. The instant alerts are a game-changer for staying relevant and capturing viral waves.", name: "Emily Johnson", designation: "Social Media Strategist", src: figmaTestimonial1 }, // Replaced missing figmaTestimonial3
     { quote: "It's simple, effective, and laser-focused on Shorts trends. Getting alerts directly means I spend less time researching and more time creating.", name: "Alex Rivera", designation: "YouTube Growth Consultant", src: figmaTestimonial1 }, // Reusing image 
     { quote: "Our agency saw a clear difference in client Shorts performance after using Trendy.bot. Reacting faster to trends works.", name: "Jordan Lee", designation: "Marketing Agency Owner", src: figmaTestimonial2 }, // Reusing image
-    { quote: "If you make YouTube Shorts seriously, you need this. It cuts through the noise and delivers actionable trend data right when you need it.", name: "Casey Morgan", designation: "Creator Coach", src: figmaTestimonial3 } // Reusing image
+    { quote: "If you make YouTube Shorts seriously, you need this. It cuts through the noise and delivers actionable trend data right when you need it.", name: "Casey Morgan", designation: "Creator Coach", src: figmaTestimonial1 } // Replaced missing figmaTestimonial3
   ];
 
   // Adapt data for the new TestimonialsSection structure
