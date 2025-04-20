@@ -9,18 +9,40 @@ import { Pricing } from '../components/ui/pricing';
 import { Plus } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+// Import moved assets
+import objectLogo from "@/assets/design-logos/object-logo.png";
+import bellEmoji from "@/assets/ui/bell-emoji.svg";
+import figmaUser1 from "@/assets/figma/E3taK89otlzdIR6McZAxomrQPyo.png";
+import figmaUser2 from "@/assets/figma/f83c9nwlZghmsOqr5KiPD7NpS1I.png";
+import figmaUser3 from "@/assets/figma/UaeMNaCCtVrxQXhyIzZB7ihAs.png";
+import figmaTestimonial1 from "@/assets/figma/YkpUok2fGo3ld57plHxrpJnqs.jpg";
+import figmaTestimonial2 from "@/assets/figma/yQgwOMluRZbGnTNDvxzNruhpY0.jpg";
+import figmaTestimonial3 from "@/assets/figma/rWhc7kSjY60xoaZdt0mdcw3KjuQ.jpg"; // Ensure this exists
+import vector703 from "@/assets/figma/Vector_1_703.svg";
+import vector690 from "@/assets/figma/Vector_1_690.svg";
+import vector709 from "@/assets/figma/Vector_1_709.svg";
+import vector660 from "@/assets/figma/Vector_1_660.svg";
+import vector666 from "@/assets/figma/Vector_1_666.svg";
+import vector672 from "@/assets/figma/Vector_1_672.svg";
+import vector684 from "@/assets/figma/Vector_1_684.svg";
+import vector696 from "@/assets/figma/Vector_1_696.svg";
+import vector678 from "@/assets/figma/Vector_1_678.svg";
+import vector1127 from "@/assets/figma/Vector_1_1127.svg";
+import vector1133 from "@/assets/figma/Vector_1_1133.svg";
+import vector1138 from "@/assets/figma/Vector_1_1138.svg";
+
 // Placeholder for missing components or types if needed
 // Example: type Props = {};
 
 const LandingPage: React.FC = () => {
   // Define testimonial data using local paths and updated quotes
   const testimonialsData = [
-    { quote: "Trendy.bot is my secret weapon for Shorts! Knowing what's popping off instantly helps me jump on trends way faster than before.", name: "Samantha Collins", designation: "Shorts Creator", src: "/assets/figma/YkpUok2fGo3ld57plHxrpJnqs.jpg" },
-    { quote: "No more guessing game for my Shorts content. The alerts are spot-on for my niche, helping me create relevant videos that actually get views.", name: "David Nguyen", designation: "Tech Reviewer (Shorts)", src: "/assets/figma/yQgwOMluRZbGnTNDvxzNruhpY0.jpg" },
-    { quote: "This tool understands the *speed* of Shorts trends. The instant alerts are a game-changer for staying relevant and capturing viral waves.", name: "Emily Johnson", designation: "Social Media Strategist", src: "/assets/figma/rWhc7kSjY60xoaZdt0mdcw3KjuQ.jpg" },
-    { quote: "It's simple, effective, and laser-focused on Shorts trends. Getting alerts directly means I spend less time researching and more time creating.", name: "Alex Rivera", designation: "YouTube Growth Consultant", src: "/assets/figma/YkpUok2fGo3ld57plHxrpJnqs.jpg" }, // Reusing image 
-    { quote: "Our agency saw a clear difference in client Shorts performance after using Trendy.bot. Reacting faster to trends works.", name: "Jordan Lee", designation: "Marketing Agency Owner", src: "/assets/figma/yQgwOMluRZbGnTNDvxzNruhpY0.jpg" }, // Reusing image
-    { quote: "If you make YouTube Shorts seriously, you need this. It cuts through the noise and delivers actionable trend data right when you need it.", name: "Casey Morgan", designation: "Creator Coach", src: "/assets/figma/rWhc7kSjY60xoaZdt0mdcw3KjuQ.jpg" } // Reusing image
+    { quote: "Trendy.bot is my secret weapon for Shorts! Knowing what's popping off instantly helps me jump on trends way faster than before.", name: "Samantha Collins", designation: "Shorts Creator", src: figmaTestimonial1 },
+    { quote: "No more guessing game for my Shorts content. The alerts are spot-on for my niche, helping me create relevant videos that actually get views.", name: "David Nguyen", designation: "Tech Reviewer (Shorts)", src: figmaTestimonial2 },
+    { quote: "This tool understands the *speed* of Shorts trends. The instant alerts are a game-changer for staying relevant and capturing viral waves.", name: "Emily Johnson", designation: "Social Media Strategist", src: figmaTestimonial3 },
+    { quote: "It's simple, effective, and laser-focused on Shorts trends. Getting alerts directly means I spend less time researching and more time creating.", name: "Alex Rivera", designation: "YouTube Growth Consultant", src: figmaTestimonial1 }, // Reusing image 
+    { quote: "Our agency saw a clear difference in client Shorts performance after using Trendy.bot. Reacting faster to trends works.", name: "Jordan Lee", designation: "Marketing Agency Owner", src: figmaTestimonial2 }, // Reusing image
+    { quote: "If you make YouTube Shorts seriously, you need this. It cuts through the noise and delivers actionable trend data right when you need it.", name: "Casey Morgan", designation: "Creator Coach", src: figmaTestimonial3 } // Reusing image
   ];
 
   // Adapt data for the new TestimonialsSection structure
@@ -36,8 +58,8 @@ const LandingPage: React.FC = () => {
 
   // Demo data for ProjectStatusCard
   const projectCardData = [
-    { title: "Real-Time Engine v2", progress: 75, dueDate: "Aug 31, 2024", contributors: [{ name: "Alex" }, { name: "Sam", image: "/assets/figma/YkpUok2fGo3ld57plHxrpJnqs.jpg" }], tasks: [{ title: "Improve velocity detection", completed: true }, { title: "Add category filtering", completed: false }], githubStars: 102, openIssues: 5 },
-    { title: "Slack Integration", progress: 100, dueDate: "Jul 15, 2024", contributors: [{ name: "Jordan", image: "/assets/figma/yQgwOMluRZbGnTNDvxzNruhpY0.jpg" }], tasks: [{ title: "Test notification flow", completed: true }, { title: "Deploy to production", completed: true }], githubStars: 45, openIssues: 0 }
+    { title: "Real-Time Engine v2", progress: 75, dueDate: "Aug 31, 2024", contributors: [{ name: "Alex" }, { name: "Sam", image: figmaTestimonial1 }], tasks: [{ title: "Improve velocity detection", completed: true }, { title: "Add category filtering", completed: false }], githubStars: 102, openIssues: 5 },
+    { title: "Slack Integration", progress: 100, dueDate: "Jul 15, 2024", contributors: [{ name: "Jordan", image: figmaTestimonial2 }], tasks: [{ title: "Test notification flow", completed: true }, { title: "Deploy to production", completed: true }], githubStars: 45, openIssues: 0 }
   ];
 
   // Demo data for Pricing Component (Copied from demo file, adjust as needed)
@@ -116,7 +138,7 @@ const LandingPage: React.FC = () => {
             rel="noopener noreferrer"
             className="flex items-center space-x-2"
           >
-            <img src="/Design/500x500-logos/Object Logo.png" alt="Trendy.bot Logo" className="h-8 w-auto" />
+            <img src={objectLogo} alt="Trendy.bot Logo" className="h-8 w-auto" />
             <span className="font-orbitron font-bold text-2xl text-white">trendy</span>
           </a>
           <div className="flex gap-8 items-center font-orbitron text-sm">
@@ -150,17 +172,17 @@ const LandingPage: React.FC = () => {
            <div className="absolute bottom-[-150px] left-[50px] w-[1200px] h-[1200px] rounded-full border border-trendy-yellow/10 opacity-50 blur-[100px] bg-trendy-yellow/5"></div>
 
            {/* Replaced mail images with floating bells */}
-           <img src="/assets/bell-emoji.svg" alt="" className="absolute top-[15%] left-[10%] w-[80px] h-auto opacity-40 blur-sm pointer-events-none animate-pulse" />
-           <img src="/assets/bell-emoji.svg" alt="" className="absolute top-[50%] right-[15%] w-[50px] h-auto opacity-50 blur-xs pointer-events-none animate-pulse delay-500" />
-           <img src="/assets/bell-emoji.svg" alt="" className="absolute bottom-[20%] left-[25%] w-[60px] h-auto opacity-30 blur-md pointer-events-none animate-pulse delay-1000" />
+           <img src={bellEmoji} alt="" className="absolute top-[15%] left-[10%] w-[80px] h-auto opacity-40 blur-sm pointer-events-none animate-pulse" />
+           <img src={bellEmoji} alt="" className="absolute top-[50%] right-[15%] w-[50px] h-auto opacity-50 blur-xs pointer-events-none animate-pulse delay-500" />
+           <img src={bellEmoji} alt="" className="absolute bottom-[20%] left-[25%] w-[60px] h-auto opacity-30 blur-md pointer-events-none animate-pulse delay-1000" />
 
            <div className="relative z-10 flex flex-col items-center gap-8 px-4">
              {/* --- Added User Pills Div --- */} 
              <div className="flex items-center gap-4 bg-black/20 backdrop-blur-[5px] border border-neutral-700/50 rounded-full px-4 py-1 shadow-md">
                <div className="flex -space-x-3">
-                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src="/assets/figma/E3taK89otlzdIR6McZAxomrQPyo.png" alt="User 1"/>
-                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src="/assets/figma/f83c9nwlZghmsOqr5KiPD7NpS1I.png" alt="User 2"/>
-                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src="/assets/figma/UaeMNaCCtVrxQXhyIzZB7ihAs.png" alt="User 3"/>
+                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src={figmaUser1} alt="User 1"/>
+                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src={figmaUser2} alt="User 2"/>
+                 <img className="inline-block h-9 w-9 rounded-full border-2 border-trendy-brown object-cover shadow-md" src={figmaUser3} alt="User 3"/>
                </div>
                <p className="text-neutral-300 font-inter text-sm md:text-base leading-snug">6,000+ people use our product</p> 
              </div>
@@ -226,7 +248,7 @@ const LandingPage: React.FC = () => {
               <div className="h-52 md:h-60 bg-gradient-to-b from-neutral-700/50 to-neutral-900/50 flex items-center justify-center p-8 relative">
                  {/* Icons: Adjust color/opacity for dark bg */}
                  <div className="flex items-center justify-center opacity-60">
-                   <img src="/assets/figma/Vector_1_703.svg" alt="Real-time Icon" className="w-16 h-16 filter invert brightness-200"/> 
+                   <img src={vector703} alt="Real-time Icon" className="w-16 h-16 filter invert brightness-200"/> 
                  </div>
               </div>
               {/* Body: Light text */}
@@ -242,7 +264,7 @@ const LandingPage: React.FC = () => {
               {/* Header: Dark gradient or solid color */}
               <div className="h-52 md:h-60 bg-gradient-to-b from-neutral-700/50 to-neutral-900/50 flex items-center justify-center p-8 relative">
                  <div className="flex items-center justify-center opacity-60">
-                    <img src="/assets/figma/Vector_1_690.svg" alt="Alert Icon" className="w-16 h-16 filter invert brightness-200"/>
+                    <img src={vector690} alt="Alert Icon" className="w-16 h-16 filter invert brightness-200"/>
                  </div>
                  <div className="absolute top-4 right-4 bg-trendy-yellow/80 text-trendy-brown rounded-md p-1 px-2 text-xs shadow-lg font-semibold">No Dashboards!</div>
                 </div>
@@ -259,7 +281,7 @@ const LandingPage: React.FC = () => {
               {/* Header: Dark gradient or solid color */}
               <div className="h-52 md:h-60 bg-gradient-to-b from-neutral-700/50 to-neutral-900/50 flex items-center justify-center p-8 relative">
                  {/* Using original image path, added filter */}
-                 <img src="/assets/figma/Vector_1_709.svg" alt="Growth Icon" className="w-16 h-16 filter invert brightness-200"/> 
+                 <img src={vector709} alt="Growth Icon" className="w-16 h-16 filter invert brightness-200"/> 
               </div>
               {/* Body: Light text */}
               <div className="p-6 md:p-8">
@@ -435,15 +457,15 @@ const LandingPage: React.FC = () => {
            <div className="relative w-full max-w-5xl h-80 md:h-96 flex items-center justify-center">
               {/* Icons: Using original paths, wrap in dark bg circle, added filter */}
               {[ 
-                { src: "/assets/figma/Vector_1_660.svg", pos: "top-[10%] left-[15%]", size: "h-12 w-12 md:h-16 md:w-16", padding: "p-5 md:p-8" },
-                { src: "/assets/figma/Vector_1_666.svg", pos: "top-[20%] right-[10%]", size: "h-10 w-10 md:h-14 md:w-14", padding: "p-4 md:p-7" },
-                { src: "/assets/figma/Vector_1_672.svg", pos: "bottom-[15%] left-[25%]", size: "h-8 w-8 md:h-12 md:w-12", padding: "p-4 md:p-6" },
-                { src: "/assets/figma/Vector_1_684.svg", pos: "bottom-[10%] right-[20%]", size: "h-12 w-12 md:h-16 md:w-16", padding: "p-5 md:p-8" },
-                { src: "/assets/figma/Vector_1_696.svg", pos: "top-[50%] left-[45%] transform -translate-x-1/2 -translate-y-1/2", size: "h-16 w-16 md:h-20 md:w-20", padding: "p-6 md:p-9" },
-                { src: "/assets/figma/Vector_1_678.svg", pos: "top-[5%] right-[30%]", size: "h-6 w-6 md:h-8 md:w-8", padding: "p-3 md:p-4" },
-                { src: "/assets/figma/Vector_1_690.svg", pos: "bottom-[5%] left-[10%]", size: "h-6 w-6 md:h-8 md:w-8", padding: "p-3 md:p-4" },
-                { src: "/assets/figma/Vector_1_703.svg", pos: "bottom-[40%] right-[5%]", size: "h-8 w-8 md:h-10 md:w-10", padding: "p-4 md:p-5" },
-                { src: "/assets/figma/Vector_1_709.svg", pos: "top-[35%] left-[5%]", size: "h-8 w-8 md:h-10 md:w-10", padding: "p-4 md:p-5" },
+                { src: vector660, pos: "top-[10%] left-[15%]", size: "h-12 w-12 md:h-16 md:w-16", padding: "p-5 md:p-8" },
+                { src: vector666, pos: "top-[20%] right-[10%]", size: "h-10 w-10 md:h-14 md:w-14", padding: "p-4 md:p-7" },
+                { src: vector672, pos: "bottom-[15%] left-[25%]", size: "h-8 w-8 md:h-12 md:w-12", padding: "p-4 md:p-6" },
+                { src: vector684, pos: "bottom-[10%] right-[20%]", size: "h-12 w-12 md:h-16 md:w-16", padding: "p-5 md:p-8" },
+                { src: vector696, pos: "top-[50%] left-[45%] transform -translate-x-1/2 -translate-y-1/2", size: "h-16 w-16 md:h-20 md:w-20", padding: "p-6 md:p-9" },
+                { src: vector678, pos: "top-[5%] right-[30%]", size: "h-6 w-6 md:h-8 md:w-8", padding: "p-3 md:p-4" },
+                { src: vector690, pos: "bottom-[5%] left-[10%]", size: "h-6 w-6 md:h-8 md:w-8", padding: "p-3 md:p-4" },
+                { src: vector703, pos: "bottom-[40%] right-[5%]", size: "h-8 w-8 md:h-10 md:w-10", padding: "p-4 md:p-5" },
+                { src: vector709, pos: "top-[35%] left-[5%]", size: "h-8 w-8 md:h-10 md:w-10", padding: "p-4 md:p-5" },
               ].map((icon, index) => (
                 <div key={index} className={`absolute ${icon.pos} bg-gradient-to-b from-neutral-700/50 to-neutral-800/50 rounded-full shadow-lg ${icon.padding} border border-neutral-600/50 flex items-center justify-center`}>
                   <img src={icon.src} alt={`Tool ${index + 1}`} className={`${icon.size} filter invert brightness-150 opacity-80`} />
@@ -500,7 +522,7 @@ const LandingPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
             {/* Column 1: Logo and Description */}
             <div className="md:col-span-1 flex flex-col items-center md:items-start text-center md:text-left">
-              <img src="/Design/500x500-logos/Object Logo.png" alt="Trendy.bot Logo" className="h-12 w-auto mb-4" />
+              <img src={objectLogo} alt="Trendy.bot Logo" className="h-12 w-auto mb-4" />
               <p className="text-sm leading-relaxed">
                 Real-time YouTube Shorts trend detection to help creators and marketers grow faster.
               </p>
@@ -528,9 +550,9 @@ const LandingPage: React.FC = () => {
                 <h4 className="text-base font-orbitron font-semibold text-white mb-4">Social Media</h4>
                 <div className="flex gap-4 justify-center md:justify-start">
                   {/* Social Icons (No filters) */}
-                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src="/assets/figma/Vector_1_1127.svg" alt="Social 1" className="w-6 h-6"/></a>
-                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src="/assets/figma/Vector_1_1133.svg" alt="Social 2" className="w-6 h-6"/></a>
-                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src="/assets/figma/Vector_1_1138.svg" alt="Social 3" className="w-6 h-6"/></a>
+                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src={vector1127} alt="Social 1" className="w-6 h-6"/></a>
+                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src={vector1133} alt="Social 2" className="w-6 h-6"/></a>
+                  <a href="#" className="text-neutral-500 hover:text-trendy-yellow transition-colors"><img src={vector1138} alt="Social 3" className="w-6 h-6"/></a>
           </div>
         </div>
             </div>
