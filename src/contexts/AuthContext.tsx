@@ -3,9 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios'; // Import axios
 import { useToast } from '@/components/ui/use-toast';
 
+// Determine the base API URL based on the environment
+const getAuthApiBaseUrl = () => {
+  if (import.meta.env.PROD) {
+    return '/api/auth'; // Use relative path for Vercel production
+  } else {
+    // Use local backend URL for development (allow override via .env)
+    return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api/auth';
+  }
+};
+
+const AUTH_API_URL = getAuthApiBaseUrl();
+
 // --- Configuration ---
-// Use environment variable for backend URL
-const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api/auth';
 // Use environment variable for the column name
 const ONBOARDING_COLUMN_NAME = import.meta.env.VITE_ONBOARDING_COLUMN || 'onboarding_complete';
 // Add subscription column names (match backend .env / NocoDB)
@@ -126,7 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      const response = await axios.post(`${BACKEND_API_URL}/login`, { email, password });
+      const response = await axios.post(`${AUTH_API_URL}/login`, { email, password });
       const { token: receivedToken, user: receivedUser } = response.data;
 
       if (receivedToken && receivedUser) {
@@ -160,7 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signup = async (email: string, password: string, name: string) => {
     setIsLoading(true);
     try {
-       const response = await axios.post(`${BACKEND_API_URL}/signup`, { name, email, password });
+       const response = await axios.post(`${AUTH_API_URL}/signup`, { name, email, password });
        const { token: receivedToken, user: receivedUser } = response.data;
 
        if (receivedToken && receivedUser) {

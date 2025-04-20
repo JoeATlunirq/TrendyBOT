@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
@@ -53,7 +53,16 @@ const notificationChannels = [
   { id: "discord", label: "Discord", icon: "💬" }
 ];
 
-const BACKEND_API_BASE_URL = 'http://localhost:5001/api';
+// Determine the base API URL based on the environment
+const getApiBaseUrl = () => {
+  if (import.meta.env.PROD) {
+    return '/api'; // Use relative path for Vercel production
+  } else {
+    // Use local backend URL for development
+    return 'http://localhost:5001/api';
+  }
+};
+const BACKEND_API_BASE_URL = getApiBaseUrl();
 
 // Define type for tracked channel object
 type TrackedChannel = {

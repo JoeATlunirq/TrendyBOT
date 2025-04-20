@@ -15,8 +15,16 @@ interface PayPalSubscriptionButtonProps {
     planName: string; // For logging/toast messages
 }
 
-// Backend API URL (ensure consistency)
-const BACKEND_API_BASE_URL = 'http://localhost:5001/api';
+// Determine the base API URL based on the environment
+const getApiBaseUrl = () => {
+  if (import.meta.env.PROD) {
+    return '/api'; // Use relative path for Vercel production
+  } else {
+    // Use local backend URL for development
+    return 'http://localhost:5001/api';
+  }
+};
+const BACKEND_API_BASE_URL = getApiBaseUrl();
 
 const PayPalSubscriptionButton: React.FC<PayPalSubscriptionButtonProps> = ({ planId, planName }) => {
     const paypalRef = useRef<HTMLDivElement>(null);

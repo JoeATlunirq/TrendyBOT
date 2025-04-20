@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,16 @@ import PayPalSubscriptionButton from '@/components/PayPalSubscriptionButton';
 import { cn } from '@/lib/utils';
 import { CreditCard, Star, Check } from 'lucide-react';
 
-// Get backend URL
-const BACKEND_API_BASE_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api';
+// Determine the base API URL based on the environment
+const getApiBaseUrl = () => {
+  if (import.meta.env.PROD) {
+    return '/api'; // Use relative path for Vercel production
+  } else {
+    // Use local backend URL for development (allow override via .env)
+    return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api';
+  }
+};
+const BACKEND_API_BASE_URL = getApiBaseUrl();
 
 // Get column names from environment variables (Vite)
 const NAME_COLUMN = import.meta.env.VITE_NAME_COLUMN || 'name';
