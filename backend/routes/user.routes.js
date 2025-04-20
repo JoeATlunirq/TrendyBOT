@@ -1,5 +1,5 @@
 const express = require('express');
-const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings } = require('../controllers/user.controller');
+const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification } = require('../controllers/user.controller');
 const { protect } = require('../middleware/auth.middleware'); // Import the protect middleware
 
 const router = express.Router();
@@ -26,6 +26,11 @@ router.get('/notifications', protect, getNotificationSettings);
 // @desc    Update user notification settings
 // @access  Private
 router.put('/notifications', protect, updateNotificationSettings);
+
+// @route   POST /api/users/notifications/test
+// @desc    Send a test notification to a configured channel
+// @access  Private
+router.post('/notifications/test', protect, sendTestNotification);
 
 // Alert Preferences routes
 // @route   GET /api/users/alert-preferences

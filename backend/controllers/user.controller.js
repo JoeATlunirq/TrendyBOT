@@ -419,6 +419,178 @@ const updateAlertTemplates = async (req, res, next) => {
     }
 };
 
+/**
+ * @desc    Send a test notification for a specified channel
+ * @route   POST /api/users/notifications/test
+ * @access  Private
+ */
+const sendTestNotification = async (req, res, next) => {
+  const userId = req.userId;
+  if (!userId) {
+    return res.status(401).json({ message: 'Not authorized, user ID missing' });
+  }
+
+  const { channelType } = req.body; // Expect 'telegram', 'discord', or 'email'
+
+  if (!channelType || !['telegram', 'discord', 'email'].includes(channelType)) {
+    return res.status(400).json({ message: 'Invalid or missing channelType. Must be telegram, discord, or email.' });
+  }
+
+  try {
+    // Fetch user record to get configuration and templates
+    const userRecord = await NocoDBService.getUserRecordById(userId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // --- Prepare Sample Data ---
+    const sampleData = {
+        video_title: "🚀 Viral Test Video Example",
+        views: "12,345",
+        likes: "1,234",
+        comments: "98",
+        channel_name: "Test Channel",
+        time_ago: "5 minutes ago",
+        video_url: "https://example.com/test-video"
+    };
+
+    // --- Function to replace placeholders ---
+    const formatMessage = (template, data) => {
+        let message = template;
+        for (const key in data) {
+            message = message.replace(new RegExp(`{${key}}`, 'g'), data[key]);
+        }
+        return message;
+    };
+
+    let successMessage = "";
+
+    // --- Channel Specific Logic ---
+    if (channelType === 'telegram') {
+        const chatId = userRecord[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'];
+        const template = userRecord[NOCODB_TEMPLATE_TELEGRAM_COLUMN || 'alert_template_telegram'] || defaultTemplates.templateTelegram;
+        const botToken = process.env.TELEGRAM_BOT_TOKEN; // Needs to be set in .env
+
+        if (!chatId) {
+            return res.status(400).json({ message: 'Telegram Chat ID not configured.' });
+        }
+        if (!botToken) {
+             console.error('Telegram Bot Token not configured in environment variables.');
+             return res.status(500).json({ message: 'Telegram bot not configured on server.' });
+        }
+
+        const messageToSend = formatMessage(template, sampleData);
+
+        // --- ACTUAL TELEGRAM SENDING LOGIC --- 
+        // Requires installing a library like 'node-telegram-bot-api'
+        const TelegramBot = require('node-telegram-bot-api');
+        const bot = new TelegramBot(botToken);
+        try {
+            // Ensure chatId is treated as a string or number as required by the library
+            await bot.sendMessage(String(chatId), messageToSend, { parse_mode: 'HTML' }); // Using HTML parse mode for potential formatting
+            successMessage = `Test message sent to Telegram Chat ID: ${chatId}`;
+        } catch (sendError) {
+            console.error('Telegram send error:', sendError.response?.body || sendError.message);
+            // Provide more specific error feedback if possible
+            const errorDetails = sendError.response?.body?.description || sendError.message || 'Unknown error';
+            return res.status(500).json({ message: `Failed to send test message to Telegram: ${errorDetails}` });
+        }
+        // --- END OF TELEGRAM SENDING --- 
+
+        // Placeholder success for now - REMOVED
+        // console.log(`--- SIMULATING Telegram Send --- 
+        // To: ${chatId}
+        // Message: ${messageToSend}
+        // ---`);
+        // successMessage = `Test message simulated for Telegram Chat ID: ${chatId}. Check server console.`;
+
+    } else if (channelType === 'discord') {
+        const webhookUrl = userRecord[NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url'];
+        const template = userRecord[NOCODB_TEMPLATE_DISCORD_COLUMN || 'alert_template_discord'] || defaultTemplates.templateDiscord;
+
+        if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+            return res.status(400).json({ message: 'Valid Discord Webhook URL not configured.' });
+        }
+
+        const messageToSend = formatMessage(template, sampleData);
+
+        // --- ACTUAL DISCORD SENDING LOGIC --- 
+        // Requires an HTTP client like 'axios' (already likely installed)
+        // try {
+        //     await axios.post(webhookUrl, { content: messageToSend });
+        //     successMessage = `Test message sent to Discord Webhook.`; 
+        // } catch (sendError) {
+        //     console.error('Discord send error:', sendError.response?.data || sendError.message);
+        //     return res.status(500).json({ message: `Failed to send test message to Discord: ${sendError.response?.data?.message || sendError.message}` });
+        // }
+        // --- END OF DISCORD SENDING --- 
+
+        // Placeholder success for now
+        console.log(`--- SIMULATING Discord Send --- 
+To Webhook: ${webhookUrl}
+Message: ${messageToSend}
+---`);
+        successMessage = `Test message simulated for Discord Webhook. Check server console.`;
+
+    } else if (channelType === 'email') {
+        const userEmail = userRecord[process.env.NOCODB_EMAIL_COLUMN || 'email'];
+        const subjectTemplate = userRecord[NOCODB_TEMPLATE_EMAIL_SUBJECT_COLUMN || 'alert_template_email_subject'] || defaultTemplates.templateEmailSubject;
+        // Note: Email preview text is less relevant for test, body needs formatting
+        // const previewTemplate = userRecord[NOCODB_TEMPLATE_EMAIL_PREVIEW_COLUMN || 'alert_template_email_preview'] || defaultTemplates.templateEmailPreview;
+
+        if (!userEmail) {
+            return res.status(400).json({ message: 'User email address not found.' });
+        }
+        
+        const subject = formatMessage(subjectTemplate, sampleData);
+        // Construct a simple HTML body for the test
+        const body = `
+            <h1>🔥 Test Trend Alert</h1>
+            <p>This is a test notification from Trendy.</p>
+            <p><strong>Video:</strong> ${sampleData.video_title}</p>
+            <p><strong>Channel:</strong> ${sampleData.channel_name}</p>
+            <p><strong>Stats:</strong> ${sampleData.views} views / ${sampleData.likes} likes / ${sampleData.comments} comments</p>
+            <p><strong>Posted:</strong> ${sampleData.time_ago}</p>
+            <p><a href="${sampleData.video_url}">Watch Video</a></p>
+        `;
+
+        // --- ACTUAL EMAIL SENDING LOGIC --- 
+        // Requires installing 'nodemailer' and configuring transport (SMTP, SendGrid, etc.)
+        // Needs environment variables for service credentials (e.g., SENDGRID_API_KEY)
+        // const nodemailer = require('nodemailer');
+        // const transporter = nodemailer.createTransport({ /* ... configuration based on service ... */ });
+        // try {
+        //     await transporter.sendMail({
+        //         from: process.env.EMAIL_FROM_ADDRESS, // Configure in .env
+        //         to: userEmail,
+        //         subject: subject,
+        //         html: body,
+        //         // text: optional plain text version
+        //     });
+        //     successMessage = `Test email sent to ${userEmail}.`;
+        // } catch (sendError) {
+        //     console.error('Email send error:', sendError);
+        //     return res.status(500).json({ message: `Failed to send test email: ${sendError.message}` });
+        // }
+        // --- END OF EMAIL SENDING --- 
+
+        // Placeholder success for now
+        console.log(`--- SIMULATING Email Send --- 
+To: ${userEmail}
+Subject: ${subject}
+Body: ${body}
+---`);
+        successMessage = `Test message simulated for Email (${userEmail}). Check server console.`;
+    }
+
+    res.status(200).json({ message: successMessage });
+
+  } catch (error) {
+    console.error(`Test Notification Error (${channelType}):`, error);
+    next(error);
+  }
+};
+
 module.exports = {
   updateUserPreferences,
   updateProfile,
@@ -428,4 +600,5 @@ module.exports = {
   updateAlertPreferences,
   getAlertTemplates,
   updateAlertTemplates,
+  sendTestNotification,
 }; 

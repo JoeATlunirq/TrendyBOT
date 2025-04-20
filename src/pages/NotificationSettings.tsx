@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, BellRing } from 'lucide-react';
+import { Loader2, BellRing, Send } from 'lucide-react';
 
 // Determine the base API URL based on the environment
 const getApiBaseUrl = () => {
@@ -39,6 +39,7 @@ const NotificationSettings = () => {
     const [settings, setSettings] = useState<NotificationSettingsState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [isTesting, setIsTesting] = useState<string | null>(null); // Track which channel is testing
 
     // Fetch current settings on load
     useEffect(() => {
@@ -107,7 +108,32 @@ const NotificationSettings = () => {
         }
     };
     
-    // TODO: Handlers for Test/Connect buttons
+    // --- Test Notification Handler ---
+    const handleTestNotification = async (channelType: 'telegram' | 'discord' | 'email') => {
+        if (!token) {
+             toast({ title: "Authentication Error", variant: "destructive" });
+             return;
+        }
+        setIsTesting(channelType);
+        try {
+            const response = await axios.post(
+                `${BACKEND_API_BASE_URL}/users/notifications/test`,
+                { channelType }, // Send the channel type in the body
+                { headers: { 'Authorization': `Bearer ${token}` }}
+            );
+            toast({ 
+                title: `Test Sent (${channelType})`, 
+                description: response.data?.message || `Test notification initiated for ${channelType}.`,
+                variant: "default"
+            });
+        } catch (error: any) {
+             const message = error.response?.data?.message || `Failed to send test ${channelType} notification.`;
+            toast({ title: "Test Failed", description: message, variant: "destructive" });
+            console.error(`Test ${channelType} error:`, error.response?.data || error);
+        } finally {
+            setIsTesting(null);
+        }
+    };
 
     if (isLoading) {
         return <div className="container mx-auto py-8 px-4 md:px-6 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto" /></div>;
@@ -153,7 +179,17 @@ const NotificationSettings = () => {
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium text-green-400 bg-green-900/50 px-2 py-1 rounded-md border border-green-700">Connected</span>
-                                <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Test (Soon)</Button>
+                                <Button 
+                                    type="button" 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={() => handleTestNotification('email')} 
+                                    disabled={isTesting !== null}
+                                    className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white"
+                                >
+                                    {isTesting === 'email' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                    Test
+                                </Button>
                             </div>
                         </div>
                         {/* Telegram Section */} 
@@ -173,8 +209,18 @@ const NotificationSettings = () => {
                             />
                              <p className="text-xs text-neutral-500">Start a chat with the trendy Telegram Bot and enter the provided ID.</p>
                             <div className="flex justify-end gap-2 pt-2">
-                                    <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Test (Soon)</Button>
-                                    <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Connect Telegram (Soon)</Button>
+                                <Button 
+                                    type="button" 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={() => handleTestNotification('telegram')} 
+                                    disabled={!settings.telegramChatId || isTesting !== null}
+                                    className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white disabled:opacity-50"
+                                >
+                                    {isTesting === 'telegram' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                    Test
+                                </Button>
+                                <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Connect (Soon)</Button>
                             </div>
                         </div>
                         {/* Discord Section */} 
@@ -194,8 +240,18 @@ const NotificationSettings = () => {
                             />
                             <p className="text-xs text-neutral-500">Create a webhook integration in your Discord server settings.</p>
                                 <div className="flex justify-end gap-2 pt-2">
-                                    <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Test (Soon)</Button>
-                                    <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Connect Discord (Soon)</Button>
+                                    <Button 
+                                        type="button" 
+                                        size="sm" 
+                                        variant="outline" 
+                                        onClick={() => handleTestNotification('discord')} 
+                                        disabled={!settings.discordWebhookUrl || isTesting !== null}
+                                        className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white disabled:opacity-50"
+                                    >
+                                         {isTesting === 'discord' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                        Test
+                                    </Button>
+                                    <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Connect (Soon)</Button>
                             </div>
                         </div>
                     </CardContent>
