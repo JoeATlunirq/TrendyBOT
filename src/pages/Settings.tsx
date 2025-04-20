@@ -30,6 +30,7 @@ const BACKEND_API_BASE_URL = getApiBaseUrl();
 const NAME_COLUMN = import.meta.env.VITE_NAME_COLUMN || 'name';
 const COMPANY_COLUMN = import.meta.env.VITE_COMPANY_COLUMN || 'company_name';
 const PROFILE_PHOTO_URL_COLUMN = import.meta.env.VITE_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
+const CURRENT_PLAN_COLUMN = 'current_plan'; // Field name from NocoDB
 
 // Notification Column Names (Ensure these match backend .env and NocoDB)
 const TELEGRAM_ID_COLUMN = 'telegram_chat_id';
@@ -56,7 +57,10 @@ const Settings = () => {
     const [profileName, setProfileName] = useState('');
     const [companyName, setCompanyName] = useState('');
     const [isProfileLoading, setIsProfileLoading] = useState(false);
-
+    
+    // Get user's current plan from NocoDB data
+    const userCurrentPlan = user && user[CURRENT_PLAN_COLUMN] ? user[CURRENT_PLAN_COLUMN] : '';
+    
     // Initialize state with user data from context
     useEffect(() => {
         if (user) {
@@ -290,19 +294,19 @@ const Settings = () => {
                          <CardContent className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                              <div>
                                  <p className="text-lg font-semibold text-neutral-100">
-                                    {currentPlan ? (
-                                        <>You are currently on the <span className="text-trendy-yellow">{currentPlan}</span> plan.</>
+                                    {userCurrentPlan ? (
+                                        <>You are currently on the <span className="text-trendy-yellow">{userCurrentPlan}</span> plan.</>
                                     ) : (
                                         <>You are on the <span className="text-neutral-400">Free</span> plan.</>
                                     )}
                                  </p>
-                                 {currentPlan && (
+                                 {userCurrentPlan && (
                                      <p className="text-sm text-neutral-400 mt-1">
                                         Manage or cancel your subscription via PayPal.
                                      </p>
                                  )}
                              </div>
-                             {currentPlan && (
+                             {userCurrentPlan && (
                                  <div className="flex gap-3">
                                      <Button 
                                          variant="outline" 
@@ -326,7 +330,7 @@ const Settings = () => {
                      {/* Pricing Tiers - Show upgrade/downgrade options based on current plan */}
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                          {plans.map((plan) => {
-                             const isCurrentPlan = currentPlan === plan.name;
+                             const isCurrentPlan = userCurrentPlan === plan.name;
                              return (
                                  <Card 
                                      key={plan.name}
@@ -364,15 +368,24 @@ const Settings = () => {
                                              ))}
                                          </ul>
                                      </CardContent>
-                                     <CardFooter className="flex-col items-stretch">
+                                     <CardFooter className="flex-col items-stretch space-y-2">
                                          {isCurrentPlan ? (
-                                            <Button 
-                                                variant="destructive"
-                                                className="w-full font-semibold bg-red-700/80 hover:bg-red-600/90 text-white" 
-                                                onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
-                                            >
-                                                 Cancel Subscription
-                                            </Button>
+                                            <>
+                                                <Button 
+                                                    variant="outline"
+                                                    className="w-full font-semibold border-neutral-600 bg-neutral-700/60 hover:bg-neutral-600/80 text-neutral-300" 
+                                                    onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
+                                                >
+                                                    <CreditCard className="mr-2 h-4 w-4" /> Manage Subscription
+                                                </Button>
+                                                <Button 
+                                                    variant="destructive"
+                                                    className="w-full font-semibold bg-red-700/80 hover:bg-red-600/90 text-white" 
+                                                    onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
+                                                >
+                                                    Cancel Subscription
+                                                </Button>
+                                            </>
                                          ) : (
                                              <PayPalSubscriptionButton 
                                                  planId={plan.paypalPlanId} 
