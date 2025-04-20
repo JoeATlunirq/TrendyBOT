@@ -323,62 +323,66 @@ const Settings = () => {
                          </CardContent>
                      </Card>
 
-                     {/* Pricing Tiers - Disable button based on context */}
+                     {/* Pricing Tiers - Show upgrade/downgrade options based on current plan */}
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                         {plans.map((plan) => (
-                             <Card 
-                                 key={plan.name}
-                                 className={cn(
-                                     "flex flex-col bg-neutral-800/50 border-neutral-700/50 backdrop-blur-sm shadow-lg text-neutral-200",
-                                     plan.isPopular ? "border-trendy-yellow ring-2 ring-trendy-yellow/50" : "border-neutral-700/50",
-                                     currentPlan === plan.name ? "ring-2 ring-green-500/50" : ""
-                                 )}
-                             >
-                                 <CardHeader className="pb-4">
-                                      {plan.isPopular && (
-                                          <div className="flex justify-end mb-2">
-                                              <Badge variant="default" className="bg-trendy-yellow text-trendy-brown border-none">Most Popular</Badge>
-                                          </div>
-                                      )}
-                                      {currentPlan === plan.name && (
-                                          <div className="flex justify-end mb-2">
-                                              <Badge variant="default" className="bg-green-600 text-white border-none">Current Plan</Badge>
-                                          </div>
-                                      )}
-                                     <CardTitle className="font-orbitron text-white text-xl tracking-wider">{plan.name.toUpperCase()}</CardTitle>
-                                     <div className="flex items-baseline gap-1">
-                                         <span className="text-4xl font-bold text-white">${plan.price}</span>
-                                         <span className="text-sm text-neutral-400 font-medium">{plan.period}</span>
-                                     </div>
-                                     <CardDescription className="text-neutral-400 pt-1 !mt-1 text-sm">{plan.description}</CardDescription>
-                                 </CardHeader>
-                                 <CardContent className="flex-1 space-y-3 pt-0 pb-6">
-                                      <ul className="space-y-2 text-sm">
-                                         {plan.features.map((feature, index) => (
-                                             <li key={index} className="flex items-start gap-2">
-                                                 <Check className="h-4 w-4 mt-0.5 text-green-400 flex-shrink-0" />
-                                                 <span className="text-neutral-300">{feature}</span>
-                                             </li>
-                                         ))}
-                                     </ul>
-                                 </CardContent>
-                                 <CardFooter className="flex-col items-stretch">
-                                     {currentPlan === plan.name ? (
-                                        <Button 
-                                            className="w-full font-semibold bg-green-700/80 hover:bg-green-600/90 text-white" 
-                                            disabled={true}
-                                        >
-                                             Current Plan <Check className="ml-2 h-4 w-4" />
-                                        </Button>
-                                     ) : (
-                                         <PayPalSubscriptionButton 
-                                             planId={plan.paypalPlanId} 
-                                             planName={plan.name} 
-                                         />
+                         {plans.map((plan) => {
+                             const isCurrentPlan = currentPlan === plan.name;
+                             return (
+                                 <Card 
+                                     key={plan.name}
+                                     className={cn(
+                                         "flex flex-col bg-neutral-800/50 border-neutral-700/50 backdrop-blur-sm shadow-lg text-neutral-200",
+                                         plan.isPopular ? "border-trendy-yellow ring-2 ring-trendy-yellow/50" : "border-neutral-700/50",
+                                         isCurrentPlan ? "ring-2 ring-green-500/50" : ""
                                      )}
-                                 </CardFooter>
-                             </Card>
-                         ))}
+                                 >
+                                     <CardHeader className="pb-4">
+                                          {plan.isPopular && !isCurrentPlan && (
+                                              <div className="flex justify-end mb-2">
+                                                  <Badge variant="default" className="bg-trendy-yellow text-trendy-brown border-none">Most Popular</Badge>
+                                              </div>
+                                          )}
+                                          {isCurrentPlan && (
+                                              <div className="flex justify-end mb-2">
+                                                  <Badge variant="default" className="bg-green-600 text-white border-none">Current Plan</Badge>
+                                              </div>
+                                          )}
+                                         <CardTitle className="font-orbitron text-white text-xl tracking-wider">{plan.name.toUpperCase()}</CardTitle>
+                                         <div className="flex items-baseline gap-1">
+                                             <span className="text-4xl font-bold text-white">${plan.price}</span>
+                                             <span className="text-sm text-neutral-400 font-medium">{plan.period}</span>
+                                         </div>
+                                         <CardDescription className="text-neutral-400 pt-1 !mt-1 text-sm">{plan.description}</CardDescription>
+                                     </CardHeader>
+                                     <CardContent className="flex-1 space-y-3 pt-0 pb-6">
+                                          <ul className="space-y-2 text-sm">
+                                             {plan.features.map((feature, index) => (
+                                                 <li key={index} className="flex items-start gap-2">
+                                                     <Check className="h-4 w-4 mt-0.5 text-green-400 flex-shrink-0" />
+                                                     <span className="text-neutral-300">{feature}</span>
+                                                 </li>
+                                             ))}
+                                         </ul>
+                                     </CardContent>
+                                     <CardFooter className="flex-col items-stretch">
+                                         {isCurrentPlan ? (
+                                            <Button 
+                                                variant="destructive"
+                                                className="w-full font-semibold bg-red-700/80 hover:bg-red-600/90 text-white" 
+                                                onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
+                                            >
+                                                 Cancel Subscription
+                                            </Button>
+                                         ) : (
+                                             <PayPalSubscriptionButton 
+                                                 planId={plan.paypalPlanId} 
+                                                 planName={plan.name} 
+                                             />
+                                         )}
+                                     </CardFooter>
+                                 </Card>
+                             );
+                         })}
                      </div>
                  </TabsContent>
             </Tabs>
