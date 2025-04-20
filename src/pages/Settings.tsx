@@ -289,16 +289,37 @@ const Settings = () => {
                          </CardHeader>
                          <CardContent className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                              <div>
-                                 <p className="text-lg font-semibold text-neutral-100">You are currently on the <span className="text-trendly-yellow">{currentPlan || 'Free'}</span> plan.</p>
-                                 <p className="text-sm text-neutral-400">Manage your subscription via PayPal.</p> 
+                                 <p className="text-lg font-semibold text-neutral-100">
+                                    {currentPlan ? (
+                                        <>You are currently on the <span className="text-trendy-yellow">{currentPlan}</span> plan.</>
+                                    ) : (
+                                        <>You are on the <span className="text-neutral-400">Free</span> plan.</>
+                                    )}
+                                 </p>
+                                 {currentPlan && (
+                                     <p className="text-sm text-neutral-400 mt-1">
+                                        Manage or cancel your subscription via PayPal.
+                                     </p>
+                                 )}
                              </div>
-                             <Button 
-                                variant="outline" 
-                                onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
-                                className="border-neutral-600 bg-neutral-700/60 hover:bg-neutral-600/80 text-neutral-300 hover:text-white"
-                             >
-                                 <CreditCard className="mr-2 h-4 w-4" /> Manage Subscription
-                             </Button>
+                             {currentPlan && (
+                                 <div className="flex gap-3">
+                                     <Button 
+                                         variant="outline" 
+                                         onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
+                                         className="border-neutral-600 bg-neutral-700/60 hover:bg-neutral-600/80 text-neutral-300 hover:text-white"
+                                     >
+                                         <CreditCard className="mr-2 h-4 w-4" /> Manage Subscription
+                                     </Button>
+                                     <Button 
+                                         variant="destructive" 
+                                         onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
+                                         className="bg-red-700/80 hover:bg-red-600/90"
+                                     >
+                                         Cancel Subscription
+                                     </Button>
+                                 </div>
+                             )}
                          </CardContent>
                      </Card>
 
@@ -309,13 +330,19 @@ const Settings = () => {
                                  key={plan.name}
                                  className={cn(
                                      "flex flex-col bg-neutral-800/50 border-neutral-700/50 backdrop-blur-sm shadow-lg text-neutral-200",
-                                     plan.isPopular ? "border-trendy-yellow ring-2 ring-trendy-yellow/50" : "border-neutral-700/50"
+                                     plan.isPopular ? "border-trendy-yellow ring-2 ring-trendy-yellow/50" : "border-neutral-700/50",
+                                     currentPlan === plan.name ? "ring-2 ring-green-500/50" : ""
                                  )}
                              >
                                  <CardHeader className="pb-4">
                                       {plan.isPopular && (
                                           <div className="flex justify-end mb-2">
                                               <Badge variant="default" className="bg-trendy-yellow text-trendy-brown border-none">Most Popular</Badge>
+                                          </div>
+                                      )}
+                                      {currentPlan === plan.name && (
+                                          <div className="flex justify-end mb-2">
+                                              <Badge variant="default" className="bg-green-600 text-white border-none">Current Plan</Badge>
                                           </div>
                                       )}
                                      <CardTitle className="font-orbitron text-white text-xl tracking-wider">{plan.name.toUpperCase()}</CardTitle>
@@ -338,17 +365,10 @@ const Settings = () => {
                                  <CardFooter className="flex-col items-stretch">
                                      {currentPlan === plan.name ? (
                                         <Button 
-                                            className={cn(
-                                                "w-full font-semibold", 
-                                                plan.isPopular 
-                                                     ? "bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90"
-                                                    : "border-neutral-600 bg-neutral-700/60 hover:bg-neutral-600/80 text-neutral-300 hover:text-white"
-                                            )} 
-                                            variant={plan.isPopular ? "default" : "outline"}
+                                            className="w-full font-semibold bg-green-700/80 hover:bg-green-600/90 text-white" 
                                             disabled={true}
                                         >
-                                             Current Plan
-                                             {plan.isPopular && <Star className="ml-2 h-4 w-4 fill-current" />}
+                                             Current Plan <Check className="ml-2 h-4 w-4" />
                                         </Button>
                                      ) : (
                                          <PayPalSubscriptionButton 
