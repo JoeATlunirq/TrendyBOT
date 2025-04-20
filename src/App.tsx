@@ -53,12 +53,18 @@ const OnboardingRoute = () => {
       return <Navigate to="/login" replace />;
   }
 
+  // Check if onboarding is complete using the DB value (1 or "1")
+  const onboardingValue = user ? user[ONBOARDING_COLUMN_NAME] : undefined;
+  const isComplete = onboardingValue === 1 || onboardingValue === "1" || onboardingValue === true;
+
   // If authenticated AND onboarding is complete, redirect to dashboard
-  if (user && user[ONBOARDING_COLUMN_NAME] === true) {
+  if (isComplete) {
+     console.log('OnboardingRoute: Redirecting to /trending (onboarding complete)');
      return <Navigate to="/trending" replace />;
   }
 
   // If user is authenticated AND onboarding is NOT complete, render Onboarding page
+  console.log('OnboardingRoute: Rendering Onboarding page (onboarding incomplete or value unrecognized)');
   return <Outlet />;
 };
 
