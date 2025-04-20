@@ -1,5 +1,6 @@
 // Real PayPal client implementation using direct axios HTTP calls
 const axios = require('axios');
+const querystring = require('querystring');
 
 // Get PayPal environment variables
 const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -30,9 +31,13 @@ const paypalClient = {
     
     try {
       console.log('Obtaining new PayPal access token...');
+      console.log(`Using API base URL: ${API_BASE_URL}`);
       
-      // Use HTTP Basic Auth for PayPal OAuth
+      // Properly encode credentials for Basic Auth
       const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      
+      // Use proper data formatting with querystring
+      const data = querystring.stringify({ grant_type: 'client_credentials' });
       
       const response = await axios({
         method: 'POST',
@@ -42,8 +47,12 @@ const paypalClient = {
           'Authorization': `Basic ${auth}`,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        data: 'grant_type=client_credentials'
+        data: data
       });
+      
+      // Log response structure (without sensitive data)
+      console.log('Token response received with status:', response.status);
+      console.log('Token response data keys:', Object.keys(response.data || {}));
       
       accessToken = response.data.access_token;
       
@@ -51,10 +60,16 @@ const paypalClient = {
       const expiresIn = response.data.expires_in || 32400; // Default 9 hours if not provided
       tokenExpiry = now + (expiresIn - 60) * 1000;
       
-      console.log('New PayPal access token obtained');
+      console.log('New PayPal access token obtained successfully');
       return accessToken;
     } catch (error) {
+      // Enhanced error logging
       console.error('Failed to obtain PayPal access token:', error.message);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', JSON.stringify(error.response.data));
+        console.error('Response headers:', JSON.stringify(error.response.headers));
+      }
       throw error;
     }
   },
@@ -69,16 +84,20 @@ const paypalClient = {
       // Get subscription details from PayPal
       const token = await this.getAccessToken();
       
+      const subscriptionId = request.subscriptionId;
+      console.log(`Fetching subscription ${subscriptionId} details from ${API_BASE_URL}`);
+      
       const subscriptionResponse = await axios({
         method: 'GET',
-        url: `${API_BASE_URL}/v1/billing/subscriptions/${request.subscriptionId}`,
+        url: `${API_BASE_URL}/v1/billing/subscriptions/${subscriptionId}`,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         }
       });
       
-      console.log(`Got subscription details for ${request.subscriptionId}`);
+      console.log(`Got subscription details for ${subscriptionId} with status:`, subscriptionResponse.status);
+      console.log('Subscription data keys:', Object.keys(subscriptionResponse.data || {}));
       
       // Return structured response that mimics the SDK format
       return {
@@ -88,7 +107,12 @@ const paypalClient = {
         }
       };
     } catch (error) {
+      // Enhanced error logging
       console.error('PayPal API Error:', error.message);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', JSON.stringify(error.response.data));
+      }
       // Rethrow with better formatting
       throw {
         statusCode: error.response?.status || 500,
