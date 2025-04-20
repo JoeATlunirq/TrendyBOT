@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "functions": {
+    "backend/server.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/backend/server.js" }
+  ]
+} 

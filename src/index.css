@@ -1,0 +1,121 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&display=swap');
+
+/* Define CSS variables globally first */
+:root {
+  --background: 35 30% 98%;
+  --foreground: 25 35% 10%;
+
+  --card: 35 30% 98%;
+  --card-foreground: 25 35% 10%;
+
+  --popover: 35 30% 98%;
+  --popover-foreground: 25 35% 10%;
+
+  --primary: 45 98% 52%;
+  --primary-foreground: 25 35% 10%;
+
+  --secondary: 25 35% 20%;
+  --secondary-foreground: 35 30% 98%;
+
+  --muted: 25 10% 92%;
+  --muted-foreground: 25 10% 45%;
+
+  --accent: 25 30% 90%;
+  --accent-foreground: 25 35% 20%;
+
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 35 30% 98%;
+
+  --border: 25 10% 85%;
+  --input: 25 10% 85%;
+  --ring: 45 98% 52%;
+
+  --radius: 0.5rem;
+
+  --sidebar-background: 25 35% 12%;
+  --sidebar-foreground: 35 30% 98%;
+  --sidebar-primary: 45 98% 52%;
+  --sidebar-primary-foreground: 25 35% 10%;
+  --sidebar-accent: 25 35% 16%;
+  --sidebar-accent-foreground: 35 30% 98%;
+  --sidebar-border: 25 35% 16%;
+  --sidebar-ring: 45 98% 52%;
+}
+
+.dark {
+  --background: 25 35% 12%;
+  --foreground: 35 30% 98%;
+
+  --card: 25 35% 16%;
+  --card-foreground: 35 30% 98%;
+
+  --popover: 25 35% 16%;
+  --popover-foreground: 35 30% 98%;
+
+  --primary: 45 98% 52%;
+  --primary-foreground: 25 35% 10%;
+
+  --secondary: 25 35% 20%;
+  --secondary-foreground: 35 30% 98%;
+
+  --muted: 25 35% 16%;
+  --muted-foreground: 25 10% 70%;
+
+  --accent: 25 35% 25%;
+  --accent-foreground: 35 30% 98%;
+
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 35 30% 98%;
+
+  --border: 25 35% 20%;
+  --input: 25 35% 20%;
+  --ring: 45 98% 52%;
+}
+
+/* Include Tailwind directives AFTER variables */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Apply base body styles within the layer - REMOVED */
+/*
+@layer base {
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+*/
+
+@layer components {
+  .trendy-gradient {
+    background: linear-gradient(135deg, #2E1D12 0%, #3E2D22 100%);
+  }
+  
+  .yellow-glow {
+    filter: drop-shadow(0 0 8px rgba(253, 196, 11, 0.5));
+  }
+  
+  .brown-glow {
+    filter: drop-shadow(0 0 8px rgba(46, 29, 18, 0.5));
+  }
+  
+  .trendy-card {
+    @apply border-2 border-trendy-yellow/20 bg-gradient-to-br from-card to-card/95;
+  }
+  
+  .trendy-button {
+    @apply bg-trendy-yellow text-trendy-brown font-medium hover:bg-trendy-yellow/90 transition-colors;
+  }
+  
+  .trendy-bg-brown {
+    background-color: #2E1D12;
+  }
+  
+  .trendy-text-yellow {
+    color: #FDC40B;
+  }
+  
+  .trendy-border-yellow {
+    border-color: #FDC40B;
+  }
+}
