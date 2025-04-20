@@ -102,15 +102,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     // Check the onboarding status using the configured column name
-    const onboardingComplete = user[ONBOARDING_COLUMN_NAME]; 
-    console.log('Onboarding status check:', onboardingComplete);
+    const onboardingValue = user[ONBOARDING_COLUMN_NAME]; 
+    console.log('Raw onboarding value:', onboardingValue);
     
-    if (onboardingComplete === true) { // Explicit check for true
-      console.log('Navigating to /dashboard'); // Add log
+    // Treat 1 or "1" as complete, everything else as incomplete
+    const isComplete = onboardingValue === 1 || onboardingValue === "1" || onboardingValue === true;
+
+    if (isComplete) { 
+      console.log('Navigating to /dashboard (onboarding complete)'); // Add log
       navigate('/dashboard');
     } else {
-      // Navigate to onboarding if false, null, or undefined
-      console.log('Navigating to /onboarding'); // Add log
+      // Navigate to onboarding if false, null, undefined, 0, "", etc.
+      console.log('Navigating to /onboarding (onboarding incomplete or value unrecognized)'); // Add log
       navigate('/onboarding'); 
     }
   }
