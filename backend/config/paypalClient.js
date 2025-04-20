@@ -1,7 +1,7 @@
 const paypalSdk = require('@paypal/paypal-server-sdk');
 console.log('paypalSdk imported:', typeof paypalSdk, Object.keys(paypalSdk || {})); // Log the imported object type and keys
-const core = paypalSdk.core; // Explicitly get the core components
-console.log('paypalSdk.core:', typeof core, Object.keys(core || {})); // Log the core object type and keys
+// const core = paypalSdk.core; // Remove this line as core is undefined
+// console.log('paypalSdk.core:', typeof core, Object.keys(core || {})); 
 
 // Get PayPal environment variables
 const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -22,17 +22,20 @@ let environment;
 console.log(`Attempting to create environment with mode: ${mode}`); // Log before creating environment
 if (mode === 'live') {
     console.log('Creating LiveEnvironment...'); // Log before new LiveEnvironment
-    environment = new core.LiveEnvironment(clientId, clientSecret); // Use the extracted core object
+    // Try accessing directly from paypalSdk
+    environment = new paypalSdk.LiveEnvironment(clientId, clientSecret); 
     console.log('PayPal Client: Using LIVE environment.');
 } else {
     console.log('Creating SandboxEnvironment...'); // Log before new SandboxEnvironment
-    environment = new core.SandboxEnvironment(clientId, clientSecret); // Use the extracted core object
+    // Try accessing directly from paypalSdk
+    environment = new paypalSdk.SandboxEnvironment(clientId, clientSecret); 
     console.log('PayPal Client: Using SANDBOX environment.');
 }
 
 // Create PayPal HTTP client instance
 console.log('Creating PayPalHttpClient...'); // Log before creating client
-const paypalClient = new core.PayPalHttpClient(environment); // Use the extracted core object
+// Try accessing directly from paypalSdk
+const paypalClient = new paypalSdk.PayPalHttpClient(environment); 
 console.log('PayPalHttpClient created successfully.'); // Log after creating client
 
 module.exports = paypalClient; 
