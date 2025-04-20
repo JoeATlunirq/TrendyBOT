@@ -1,6 +1,6 @@
 const NocoDBService = require('../services/nocodb.service');
 const paypalClient = require('../config/paypalClient'); // Import the configured client
-const checkoutSdk = require('@paypal/checkout-server-sdk'); // Rename import for clarity
+const paypal = require('@paypal/paypal-server-sdk'); // Use the new SDK
 
 // Assume PayPal SDK would be configured elsewhere using .env credentials
 // const paypal = require('@paypal/checkout-server-sdk'); 
@@ -41,7 +41,7 @@ const approveSubscription = async (req, res, next) => {
     try {
         // --- Step 1: Verify Subscription with PayPal SDK ---
         console.log(`Verifying PayPal Subscription ID: ${subscriptionID}...`);
-        const request = new checkoutSdk.subscriptions.SubscriptionsGetRequest(subscriptionID);
+        const request = new paypal.subscriptions.SubscriptionsGetRequest(subscriptionID);
         let subscriptionDetails;
         try {
              subscriptionDetails = await paypalClient.execute(request);

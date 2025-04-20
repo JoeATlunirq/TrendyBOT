@@ -1,4 +1,4 @@
-const paypal = require('@paypal/checkout-server-sdk');
+const paypal = require('@paypal/paypal-server-sdk');
 
 // Get PayPal environment variables
 const clientId = process.env.PAYPAL_CLIENT_ID;
