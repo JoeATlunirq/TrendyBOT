@@ -1,10 +1,7 @@
 const NocoDBService = require('../services/nocodb.service');
-const paypalClient = require('../config/paypalClient'); // Import the configured client
-const paypal = require('@paypal/paypal-server-sdk'); // Use the new SDK
-
-// Assume PayPal SDK would be configured elsewhere using .env credentials
-// const paypal = require('@paypal/checkout-server-sdk'); 
-// const paypalClient = require('../config/paypalClient'); // Needs to be created
+const paypalClient = require('../config/paypalClient'); // Import the configured client (now a mock)
+// Remove the import for paypal - we're using the mock client
+// const paypal = require('@paypal/paypal-server-sdk'); 
 
 // Destructure column names from environment variables
 const { 
@@ -41,10 +38,12 @@ const approveSubscription = async (req, res, next) => {
     try {
         // --- Step 1: Verify Subscription with PayPal SDK ---
         console.log(`Verifying PayPal Subscription ID: ${subscriptionID}...`);
-        const request = new paypal.subscriptions.SubscriptionsGetRequest(subscriptionID);
+        // Create a simple object that mimics the request for the mock client
+        const request = { subscriptionId: subscriptionID };
         let subscriptionDetails;
         try {
              subscriptionDetails = await paypalClient.execute(request);
+             console.log("Subscription verification result:", JSON.stringify(subscriptionDetails));
         } catch (paypalError) {
              console.error("PayPal API Error during subscription fetch:", paypalError.message);
              // Forward PayPal's specific error if possible
