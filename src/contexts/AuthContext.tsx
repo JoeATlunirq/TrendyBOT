@@ -80,17 +80,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const parsedUser: User = JSON.parse(storedUser);
         setToken(storedToken);
         setUser(parsedUser);
-        // Ensure value passed to setCurrentPlan is string or null
+        // Correctly set plan: use actual value if non-empty string, otherwise null
         const plan = parsedUser[CURRENT_PLAN_COLUMN];
-        setCurrentPlan(typeof plan === 'string' ? plan : 'Free'); 
+        setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
       } catch (error) {
         console.error("Failed to parse stored user data:", error);
         localStorage.removeItem('trendly_user');
         localStorage.removeItem('trendly_token');
-        setCurrentPlan(null); 
+        setCurrentPlan(null); // Set to null on error
       }
     } else {
-        setCurrentPlan(null); 
+        setCurrentPlan(null); // Set to null if no stored user/token
     }
     setIsLoading(false);
   }, []);
@@ -122,9 +122,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (userData && tokenData) {
           localStorage.setItem('trendly_token', tokenData);
           localStorage.setItem('trendly_user', JSON.stringify(userData));
-          // Ensure value passed to setCurrentPlan is string or null
+          // Correctly set plan: use actual value if non-empty string, otherwise null
           const plan = userData[CURRENT_PLAN_COLUMN];
-          setCurrentPlan(typeof plan === 'string' ? plan : 'Free');
+          setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
       } else {
           localStorage.removeItem('trendly_user');
           localStorage.removeItem('trendly_token');
