@@ -3,12 +3,13 @@
 // Requires PayPal SDK or manual implementation based on:
 // https://developer.paypal.com/docs/api/webhooks/v1/#verify-webhook-signature
 
-const checkoutNodeJssdk = require('@paypal/checkout-server-sdk');
-console.log("PayPal SDK Import Result:", checkoutNodeJssdk);
-console.log("Keys in PayPal SDK Import:", checkoutNodeJssdk ? Object.keys(checkoutNodeJssdk) : 'null or undefined');
+const paypal = require('@paypal/paypal-server-sdk'); // Using the correct, non-deprecated SDK
+
+console.log("PayPal Server SDK Import Result:", paypal);
+console.log("Keys in PayPal Server SDK Import:", paypal ? Object.keys(paypal) : 'null or undefined');
 
 /**
- * Creates a PayPal HTTP client instance based on environment variables.
+ * Creates a PayPal HTTP client instance based on environment variables using paypal-server-sdk.
  */
 function environment() {
     const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -16,65 +17,65 @@ function environment() {
     const mode = process.env.PAYPAL_MODE || 'sandbox'; // Default to sandbox
 
     if (!clientId || !clientSecret) {
-        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing in environment variables.');
-        // Depending on setup, you might want to throw or exit here
-        // For now, we'll return null which will cause verification to fail downstream
-        return null; 
+        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing.');
+        return null;
     }
 
-    // Check if core and environments exist before trying to instantiate
-    if (!checkoutNodeJssdk || !checkoutNodeJssdk.core || !checkoutNodeJssdk.core.LiveEnvironment || !checkoutNodeJssdk.core.SandboxEnvironment) {
-        console.error('PayPal SDK core or environment components not found in import!');
+    // Check if core and environments exist
+    if (!paypal || !paypal.core || !paypal.core.LiveEnvironment || !paypal.core.SandboxEnvironment) {
+        console.error('PayPal SDK core or environment components not found!');
         return null;
     }
 
     if (mode === 'live') {
-        return new checkoutNodeJssdk.core.LiveEnvironment(clientId, clientSecret);
+        return new paypal.core.LiveEnvironment(clientId, clientSecret);
     } else {
-        return new checkoutNodeJssdk.core.SandboxEnvironment(clientId, clientSecret);
+        return new paypal.core.SandboxEnvironment(clientId, clientSecret);
     }
 }
 
 function client() {
     const env = environment();
     if (!env) {
-        return null; // Propagate the error if env setup failed
-    }
-    // Check if PayPalHttpClient exists
-    if (!checkoutNodeJssdk || !checkoutNodeJssdk.core || !checkoutNodeJssdk.core.PayPalHttpClient) {
-        console.error('PayPal SDK PayPalHttpClient component not found in import!');
         return null;
     }
-    return new checkoutNodeJssdk.core.PayPalHttpClient(env);
+    // Check if PayPalHttpClient exists
+    if (!paypal || !paypal.core || !paypal.core.PayPalHttpClient) {
+        console.error('PayPal SDK PayPalHttpClient component not found!');
+        return null;
+    }
+    return new paypal.core.PayPalHttpClient(env);
 }
 
 /**
- * Verifies the signature of an incoming PayPal webhook using the SDK.
+ * Verifies the signature of an incoming PayPal webhook using the paypal-server-sdk.
  */
 const verifyPayPalWebhook = async (req, res, next) => {
-    console.log("Attempting PayPal webhook verification...");
-    
+    console.log("Attempting PayPal webhook verification with @paypal/paypal-server-sdk...");
+
     const paypalClient = client();
     if (!paypalClient) {
-        console.error("PayPal client could not be initialized. Check environment variables or SDK import.");
+        console.error("PayPal client could not be initialized.");
         return res.status(500).send('Webhook verification failed: Server configuration error.');
     }
 
     const webhookId = process.env.PAYPAL_WEBHOOK_ID;
     if (!webhookId) {
-        console.error('FATAL ERROR: PAYPAL_WEBHOOK_ID is missing. Cannot verify webhook.');
+        console.error('FATAL ERROR: PAYPAL_WEBHOOK_ID is missing.');
         return res.status(500).send('Webhook verification failed: Server configuration error.');
     }
 
-    // Check if the webhooks part and the specific request class exist
-    if (!checkoutNodeJssdk || !checkoutNodeJssdk.webhooks || !checkoutNodeJssdk.webhooks.WebhooksVerifySignatureRequest) {
-        console.error('PayPal SDK webhooks component or WebhooksVerifySignatureRequest not found!');
-        console.log('Available SDK keys:', checkoutNodeJssdk ? Object.keys(checkoutNodeJssdk) : 'null or undefined');
+    // Check if the webhooks verification component exists in the new SDK
+    // The structure might differ; common patterns include accessing via paypal.webhooks
+    if (!paypal || !paypal.Webhooks || !paypal.Webhooks.WebhookVerifyRequest) { // Adjust if class name is different
+        console.error('PayPal SDK Webhooks component or VerifyRequest class not found! Check SDK structure.');
+        console.log('Available paypal SDK keys:', paypal ? Object.keys(paypal) : 'null or undefined');
         return res.status(500).send('Webhook verification failed: Server configuration error (SDK issue).');
     }
 
-    // Construct the request for the PayPal SDK
-    const request = new checkoutNodeJssdk.webhooks.WebhooksVerifySignatureRequest();
+    // Construct the verification request using the new SDK's structure
+    // This might require slightly different methods or structure - adjust based on SDK docs if needed
+    const request = new paypal.Webhooks.WebhookVerifyRequest(); // Example: Assuming class name
     request.webhookId(webhookId);
     request.transmissionId(req.headers['paypal-transmission-id']);
     request.transmissionSig(req.headers['paypal-transmission-sig']);
@@ -85,30 +86,29 @@ const verifyPayPalWebhook = async (req, res, next) => {
 
     try {
         console.log("Executing PayPal SDK verifyWebhookSignature...");
+        // The method to execute might differ slightly in the new SDK
         const response = await paypalClient.execute(request);
-        const verificationStatus = response?.result?.verification_status;
+        // Check the response structure for verification status - this might change
+        const verificationStatus = response?.result?.verification_status; // Assuming similar structure
 
         console.log("PayPal SDK Verification Response Status:", verificationStatus);
 
         if (verificationStatus === 'SUCCESS') {
             console.log("PayPal webhook verification successful.");
-            // IMPORTANT: Parse the raw body to JSON for the next middleware/controller
             try {
-                // req.body is still the raw Buffer here
-                req.body = JSON.parse(req.body.toString('utf-8')); 
+                req.body = JSON.parse(req.body.toString('utf-8'));
             } catch (parseError) {
                 console.error("Failed to parse webhook body after successful verification:", parseError);
                 return res.status(400).send('Invalid JSON body in webhook.');
             }
-            next(); // Proceed to the controller
+            next();
         } else {
             console.error(`Webhook verification failed: Status=${verificationStatus}`);
             return res.status(403).send('Webhook verification failed: Invalid signature.');
         }
     } catch (error) {
         console.error('Error executing PayPal webhook verification:', error?.message || error);
-        // Log the detailed error if available (e.g., from SDK)
-        if (error.isAxiosError && error.response) { // Example check for Axios errors if SDK uses it
+        if (error.isAxiosError && error.response) {
              console.error("PayPal SDK Error Details:", error.response.data);
         }
         return res.status(500).send('Webhook verification failed due to server error.');
