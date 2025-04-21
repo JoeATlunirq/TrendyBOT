@@ -1,8 +1,7 @@
 // backend/routes/subscription.routes.js
 const express = require('express');
 const { handleSubscriptionSuccess } = require('../controllers/subscription.controller');
-// TODO: Import and add webhook verification middleware if needed
-// const { verifyWebhookSignature } = require('../middleware/webhookVerification.middleware');
+const { verifyPayPalWebhook } = require('../middleware/paypalWebhookVerification.middleware');
 
 const router = express.Router();
 
@@ -11,8 +10,7 @@ const router = express.Router();
 // Apply webhook verification middleware before the controller
 router.post(
     '/webhook', 
-    // express.raw({ type: 'application/json' }), // Needed if verifying raw body signature
-    // verifyWebhookSignature, // Add your verification middleware here
+    verifyPayPalWebhook,
     handleSubscriptionSuccess
 );
 

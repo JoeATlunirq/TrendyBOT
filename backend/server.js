@@ -15,12 +15,13 @@ const app = express();
 // Enable CORS for all origins (adjust for production)
 app.use(cors()); 
 
-// IMPORTANT: Order matters for body parsers!
-// Use raw body parser FIRST for specific webhook routes that need it.
-app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
-    console.log('Raw body middleware for /api/paypal/webhook executed.');
-    next();
-});
+// IMPORTANT: Raw body parsers MUST come before express.json()
+// Raw parser for PayPal IPN/Webhook (if using /api/paypal route for IPN)
+app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
+
+// Raw parser for the NEW Subscription Webhook endpoint
+// Needed for signature verification
+app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' }));
 
 // Then use JSON parser for all other routes.
 app.use(express.json()); 
@@ -47,6 +48,11 @@ app.listen(PORT, () => {
   if (!process.env.NOCODB_BASE_URL || !process.env.NOCODB_USERS_TABLE_ID || !process.env.NOCODB_API_TOKEN || !process.env.JWT_SECRET) {
     console.warn('\n⚠️ WARNING: Essential environment variables (NocoDB/JWT) seem missing.');
     console.warn('Please ensure NOCODB_BASE_URL, NOCODB_USERS_TABLE_ID, NOCODB_API_TOKEN, and JWT_SECRET are set in your .env file.\n');
+  }
+
+  // Also check for PayPal Webhook ID (needed for verification)
+  if (!process.env.PAYPAL_WEBHOOK_ID) {
+      console.warn('\n⚠️ WARNING: PAYPAL_WEBHOOK_ID environment variable is missing. Webhook verification will fail.\n');
   }
 
   // Start the scheduled jobs
