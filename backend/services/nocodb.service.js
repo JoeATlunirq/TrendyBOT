@@ -192,10 +192,46 @@ const findUserBySubscriptionId = async (subscriptionId) => {
     }
 };
 
+/**
+ * Finds user records based on a NocoDB filter string.
+ * **PLACEHOLDER - ADAPT 'where' PARAMETER BASED ON NOCODB API DOCS**
+ * @param {string} filterString - NocoDB API filter string (e.g., "(column,eq,value)~and(...)")
+ * @returns {Promise<Array<object>>} List of user records matching the filter.
+ * @throws {Error} If the API request fails.
+ */
+const findUsers = async (filterString) => {
+    console.log(`NocoDBService.findUsers called with filter: ${filterString}`);
+    try {
+        // *** IMPORTANT: The parameter name for filtering (`where`, `filterByFormula`, etc.) ***
+        // *** depends heavily on your NocoDB API version. CONSULT NOCODB DOCS! ***
+        const response = await nocoAxios.get('/records', {
+            params: {
+                // COMMON NocoDB v1/v2 parameter name is 'where'
+                where: filterString,
+                // Other potential params if needed:
+                // limit: 1000, // Adjust limit as needed
+                // fields: 'Id,trial_expires_at,subscription_status,current_plan' // Fetch only needed fields
+            }
+        });
+
+        // NocoDB usually returns data in a nested structure, e.g., response.data.list
+        const userList = response.data?.list || response.data || []; // Adapt based on actual response structure
+        console.log(`NocoDBService.findUsers found ${userList.length} users.`);
+        return userList;
+
+    } catch (error) {
+        console.error('NocoDB findUsers Error:', error.response?.data || error.message);
+        // Don't crash the scheduler, return empty list or re-throw based on desired behavior
+        // throw new Error(`Failed to find users in NocoDB: ${error.response?.data?.msg || error.message}`);
+        return []; // Return empty on error to prevent scheduler crash
+    }
+};
+
 module.exports = {
     findUserByEmail,
     createUser,
     updateUser,
     getUserRecordById,
     findUserBySubscriptionId,
+    findUsers,
 }; 

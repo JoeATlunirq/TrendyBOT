@@ -1,4 +1,6 @@
 const NocoDBService = require('../services/nocodb.service');
+const SubscriptionLogicService = require('../services/subscriptionLogic.service');
+const COLS = require('../config/nocodb_columns');
 
 // Destructure column names from environment variables
 const { 
@@ -168,7 +170,7 @@ const updateNotificationSettings = async (req, res, next) => {
 
   // Extract expected fields from request body
   const { 
-      telegramChatId, 
+      // telegramChatId, // REMOVED - Should only be set via verification
       discordWebhookUrl, 
       deliveryPreference, 
       // alertTemplates // If handling templates here
@@ -176,9 +178,9 @@ const updateNotificationSettings = async (req, res, next) => {
 
   // Prepare data object with correct column names from .env
   const dataToUpdate = {};
-  if (telegramChatId !== undefined) {
-      dataToUpdate[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] = telegramChatId;
-  }
+  // if (telegramChatId !== undefined) { // REMOVED
+  //     dataToUpdate[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] = telegramChatId;
+  // }
   if (discordWebhookUrl !== undefined) {
       dataToUpdate[NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url'] = discordWebhookUrl;
   }
@@ -232,6 +234,9 @@ const getNotificationSettings = async (req, res, next) => {
             // Add connection status flags if you implemented them in NocoDB
             // [NOCODB_IS_TELEGRAM_CONNECTED_COLUMN || 'is_telegram_connected']: userRecord[NOCODB_IS_TELEGRAM_CONNECTED_COLUMN || 'is_telegram_connected'] ?? false,
             // [NOCODB_IS_DISCORD_CONNECTED_COLUMN || 'is_discord_connected']: userRecord[NOCODB_IS_DISCORD_CONNECTED_COLUMN || 'is_discord_connected'] ?? false,
+            // Add new fields needed by frontend
+            [COLS.TELEGRAM_ACCESS_CODE]: userRecord[COLS.TELEGRAM_ACCESS_CODE] ?? null, 
+            [COLS.IS_TELEGRAM_CODE_VALID]: userRecord[COLS.IS_TELEGRAM_CODE_VALID] ?? false, 
         };
         res.status(200).json(notificationSettings);
 
@@ -591,6 +596,49 @@ Body: ${body}
   }
 };
 
+/**
+ * @desc    Verify a Telegram access code (provided by user) and link Chat ID
+ * @route   POST /api/users/notifications/telegram/verify-code
+ * @access  Private
+ */
+const verifyTelegramCode = async (req, res, next) => {
+    const userId = req.userId; // From 'protect' middleware
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized, user ID missing' });
+    }
+
+    // Frontend now sends the access code (stored in DB) and chat ID (from bot)
+    const { code, chatId } = req.body; 
+
+    if (!code || !chatId) {
+        return res.status(400).json({ message: 'Verification code and Telegram Chat ID are required.' });
+    }
+     // Basic format checks
+     if (typeof code !== 'string' || code.length < 8 || code.length > 12) {
+        return res.status(400).json({ message: 'Invalid verification code format.' });
+     }
+      if (typeof chatId !== 'string' || !/^-?\d+$/.test(chatId)) { 
+        return res.status(400).json({ message: 'Invalid Telegram Chat ID format.' });
+     }
+
+    try {
+        // Use the new service function
+        const result = await SubscriptionLogicService.verifyTelegramCodeAndUpdate(userId, code, chatId);
+
+        if (result.success) {
+            res.status(200).json({ message: result.message }); // e.g., 'Telegram account connected successfully.'
+        } else {
+            // Service handles specific errors, return 400 for user-fixable issues
+            console.warn(`Telegram verification failed for user ${userId}: ${result.message}`);
+            return res.status(400).json({ message: result.message }); 
+        }
+    } catch (error) {
+        // Catch unexpected errors from the service or controller
+        console.error(`Unexpected Error in verifyTelegramCode for user ${userId}:`, error);
+        next(new Error('Failed to verify Telegram code due to a server error.')); // Generic error
+    }
+};
+
 module.exports = {
   updateUserPreferences,
   updateProfile,
@@ -601,4 +649,5 @@ module.exports = {
   getAlertTemplates,
   updateAlertTemplates,
   sendTestNotification,
+  verifyTelegramCode
 }; 

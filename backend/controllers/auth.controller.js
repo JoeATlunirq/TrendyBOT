@@ -1,6 +1,8 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const NocoDBService = require('../services/nocodb.service');
+const SubscriptionLogicService = require('../services/subscriptionLogic.service');
+const COLS = require('../config/nocodb_columns');
 
 // --- Helper Functions ---
 const generateToken = (userId) => {
@@ -12,7 +14,7 @@ const generateToken = (userId) => {
 // --- Controller Functions ---
 
 /**
- * @desc    Register a new user
+ * @desc    Register a new user & initialize free trial
  * @route   POST /api/auth/signup
  * @access  Public
  */
@@ -39,27 +41,66 @@ const signup = async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create user in NocoDB
-    const newUser = await NocoDBService.createUser(name, email, hashedPassword);
-    if (!newUser) {
-        // createUser should throw an error if NocoDB fails, but double-check
-        throw new Error('Failed to create user record in NocoDB');
+    // Assume createUser only takes essential fields, others are set later
+    const newUserBase = await NocoDBService.createUser(name, email, hashedPassword);
+    if (!newUserBase || !newUserBase[COLS.USER_ID]) { // Check if ID exists
+        throw new Error('Failed to create user record in NocoDB or missing ID.');
+    }
+    const userId = newUserBase[COLS.USER_ID];
+
+    // Initialize Free Trial
+    let trialResult = { success: false, message: 'Trial check skipped.' };
+    try {
+        trialResult = await SubscriptionLogicService.startFreeTrial(userId);
+        if (trialResult.success) {
+            console.log(`Trial initialized for new user ${userId}`);
+            // Add trial info to user object if needed for response
+            newUserBase[COLS.CURRENT_PLAN] = "Free Trial"; 
+            newUserBase[COLS.SUBSCRIPTION_STATUS] = "Active";
+            newUserBase[COLS.TELEGRAM_ACCESS_CODE] = trialResult.accessCode; // Include generated code
+        } else {
+            console.warn(`Trial not started for user ${userId}: ${trialResult.message}`);
+             // Ensure user is marked appropriately if trial fails
+             await NocoDBService.updateUser(userId, {
+                 [COLS.CURRENT_PLAN]: "Inactive",
+                 [COLS.SUBSCRIPTION_STATUS]: "Requires Subscription",
+                 [COLS.IS_TRIAL_USED]: true // Mark as used even if failed
+            });
+             newUserBase[COLS.CURRENT_PLAN] = "Inactive";
+             newUserBase[COLS.SUBSCRIPTION_STATUS] = "Requires Subscription";
+        }
+    } catch (trialError) {
+        console.error(`Critical error during trial initialization for user ${userId}:`, trialError);
+        // If trial fails catastrophically, should we delete the user? Or leave inactive?
+        // For now, leave inactive
+         try {
+            await NocoDBService.updateUser(userId, {
+                [COLS.CURRENT_PLAN]: "Inactive",
+                [COLS.SUBSCRIPTION_STATUS]: "Requires Subscription",
+                [COLS.IS_TRIAL_USED]: true
+            });
+            newUserBase[COLS.CURRENT_PLAN] = "Inactive";
+            newUserBase[COLS.SUBSCRIPTION_STATUS] = "Requires Subscription";
+        } catch (updateError) {
+             console.error(`Failed to update user ${userId} status after trial init error:`, updateError);
+        }
     }
 
     // Generate JWT
-    const token = generateToken(newUser.Id); // Use the ID returned by NocoDB
+    const token = generateToken(userId); 
 
     // Exclude password from the response user object
-    const { [process.env.NOCODB_PASSWORD_COLUMN]: _, ...userWithoutPassword } = newUser;
+    const { [COLS.PASSWORD]: _, ...userResponse } = newUserBase; // Use potentially updated newUserBase
 
     res.status(201).json({
       token,
-      user: userWithoutPassword, // Send back user info (without password)
+      user: userResponse, // Send back user info (without password, with plan status)
     });
 
   } catch (error) {
     console.error('Signup Error:', error);
-    // Pass error to the error handling middleware
-    next(error); 
+    // Handle specific errors (like duplicate email already handled)
+    next(error); // Pass to generic error handler
   }
 };
 
@@ -84,7 +125,7 @@ const login = async (req, res, next) => {
     }
 
     // Compare password
-    const passwordColumn = process.env.NOCODB_PASSWORD_COLUMN || 'password';
+    const passwordColumn = COLS.PASSWORD; // Use COLS constant
     const isMatch = await bcrypt.compare(password, user[passwordColumn]);
 
     if (!isMatch) {
@@ -92,7 +133,7 @@ const login = async (req, res, next) => {
     }
 
     // Generate JWT
-    const token = generateToken(user.Id); // Use the ID from the found user
+    const token = generateToken(user[COLS.USER_ID]); // Use COLS constant for ID
 
     // Exclude password from the response user object
     const { [passwordColumn]: _, ...userWithoutPassword } = user;

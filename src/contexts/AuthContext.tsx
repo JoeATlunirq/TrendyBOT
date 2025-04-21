@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios'; // Import axios
 import { useToast } from '@/components/ui/use-toast';
@@ -72,51 +72,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Check for existing token and user in localStorage on initial load
   useEffect(() => {
-    const storedToken = localStorage.getItem('trendly_token');
-    const storedUser = localStorage.getItem('trendly_user');
-    
-    if (storedToken && storedUser) {
-      try {
-        const parsedUser: User = JSON.parse(storedUser);
-        setToken(storedToken);
-        setUser(parsedUser);
-        // Correctly set plan: use actual value if non-empty string, otherwise null
-        const plan = parsedUser[CURRENT_PLAN_COLUMN];
-        setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
-      } catch (error) {
-        console.error("Failed to parse stored user data:", error);
-        localStorage.removeItem('trendly_user');
-        localStorage.removeItem('trendly_token');
-        setCurrentPlan(null); // Set to null on error
-      }
-    } else {
+    const checkAuth = () => {
+      const storedToken = localStorage.getItem('trendly_token');
+      const storedUser = localStorage.getItem('trendly_user');
+      
+      if (storedToken && storedUser) {
+        try {
+          const parsedUser: User = JSON.parse(storedUser);
+          setToken(storedToken);
+          setUser(parsedUser);
+          // Correctly set plan: use actual value if non-empty string, otherwise null
+          const plan = parsedUser[CURRENT_PLAN_COLUMN];
+          setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
+        } catch (error) {
+          console.error("Failed to parse stored user data:", error);
+          localStorage.removeItem('trendly_user');
+          localStorage.removeItem('trendly_token');
+          setCurrentPlan(null); // Set to null on error
+        }
+      } else {
         setCurrentPlan(null); // Set to null if no stored user/token
-    }
-    setIsLoading(false);
-  }, []);
+      }
+      setIsLoading(false);
+    };
+
+    checkAuth();
+  }, []); // Empty dependency array since this should only run once on mount
 
   // --- Helper Function for Navigation ---
-  const navigateAfterAuth = (user: User | null) => {
+  const navigateAfterAuth = useCallback((user: User | null) => {
     if (!user) {
-      navigate('/login'); // Should not happen, but fallback
+      console.log('No user data, navigating to login');
+      navigate('/login', { replace: true });
       return;
     }
-    // Check the onboarding status using the configured column name
-    const onboardingValue = user[ONBOARDING_COLUMN_NAME]; 
-    console.log('Raw onboarding value:', onboardingValue);
-    
-    // Treat 1 or "1" as complete, everything else as incomplete
-    const isComplete = onboardingValue === 1 || onboardingValue === "1" || onboardingValue === true;
 
-    if (isComplete) { 
-      console.log('Navigating to /dashboard (onboarding complete)'); // Add log
-      navigate('/dashboard');
+    // Check if we're already on the correct page to prevent unnecessary navigation
+    const onboardingValue = user[ONBOARDING_COLUMN_NAME];
+    const isComplete = onboardingValue === 1 || onboardingValue === "1" || onboardingValue === true;
+    const targetPath = isComplete ? '/dashboard' : '/onboarding';
+
+    // Only navigate if we're not already on the target path
+    if (window.location.pathname !== targetPath) {
+      console.log(`Navigating to ${targetPath} (onboarding ${isComplete ? 'complete' : 'incomplete'})`);
+      navigate(targetPath, { replace: true });
     } else {
-      // Navigate to onboarding if false, null, undefined, 0, "", etc.
-      console.log('Navigating to /onboarding (onboarding incomplete or value unrecognized)'); // Add log
-      navigate('/onboarding'); 
+      console.log(`Already on ${targetPath}, skipping navigation`);
     }
-  }
+  }, [navigate]);
 
   // Helper to set user state and plan
   const setUserAndPlan = (userData: User | null, tokenData: string | null) => {
@@ -207,12 +210,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Logout function - Clears state and localStorage
   const logout = () => {
-    setUserAndPlan(null, null); // Use helper to clear everything
+    setUserAndPlan(null, null);
     toast({
       title: "Logged out",
       description: "You have been successfully logged out.",
     });
-    navigate('/login'); // Redirect to login page
+    navigate('/login', { replace: true }); // Add replace: true
   };
 
   // Provide context value including currentPlan

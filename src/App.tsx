@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { SpeedInsights } from "@vercel/speed-insights/next"
+import { UserSettingsProvider } from "@/contexts/UserSettingsContext";
 
 // Pages
 import Login from "@/pages/Login";
@@ -118,14 +118,16 @@ const AppRoutes = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <UserSettingsProvider>
+            <AppRoutes />
+          </UserSettingsProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
+    <Toaster />
+    <Sonner />
   </QueryClientProvider>
 );
 

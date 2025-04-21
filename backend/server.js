@@ -5,7 +5,9 @@ const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const youtubeRoutes = require('./routes/youtube.routes');
 const paypalRoutes = require('./routes/paypal.routes');
+const subscriptionRoutes = require('./routes/subscription.routes');
 const { errorHandler } = require('./middleware/error.middleware');
+const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker');
 
 const app = express();
 
@@ -13,13 +15,14 @@ const app = express();
 // Enable CORS for all origins (adjust for production)
 app.use(cors()); 
 
-// IMPORTANT: Apply raw body parser specifically for the webhook route FIRST
+// IMPORTANT: Order matters for body parsers!
+// Use raw body parser FIRST for specific webhook routes that need it.
 app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
     console.log('Raw body middleware for /api/paypal/webhook executed.');
     next();
 });
 
-// Parse JSON request bodies for all other routes AFTER the raw parser for webhook
+// Then use JSON parser for all other routes.
 app.use(express.json()); 
 
 // --- Routes ---
@@ -30,12 +33,13 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/youtube', youtubeRoutes);
-app.use('/api/paypal', paypalRoutes); // This router will now receive the raw body for /webhook
+app.use('/api/paypal', paypalRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 
 // --- Error Handling ---
 app.use(errorHandler);
 
-// --- Start Server ---
+// --- Start Server & Scheduler ---
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -44,4 +48,7 @@ app.listen(PORT, () => {
     console.warn('\n⚠️ WARNING: Essential environment variables (NocoDB/JWT) seem missing.');
     console.warn('Please ensure NOCODB_BASE_URL, NOCODB_USERS_TABLE_ID, NOCODB_API_TOKEN, and JWT_SECRET are set in your .env file.\n');
   }
+
+  // Start the scheduled jobs
+  scheduleTrialCheck();
 }); 

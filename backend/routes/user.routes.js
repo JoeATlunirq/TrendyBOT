@@ -1,5 +1,5 @@
 const express = require('express');
-const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification } = require('../controllers/user.controller');
+const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, verifyTelegramCode } = require('../controllers/user.controller');
 const { protect } = require('../middleware/auth.middleware'); // Import the protect middleware
 
 const router = express.Router();
@@ -31,6 +31,10 @@ router.put('/notifications', protect, updateNotificationSettings);
 // @desc    Send a test notification to a configured channel
 // @access  Private
 router.post('/notifications/test', protect, sendTestNotification);
+
+// Telegram Verification routes
+// router.post('/notifications/telegram/request-code', protect, requestTelegramCode); // REMOVED - No longer needed
+router.post('/notifications/telegram/verify-code', protect, verifyTelegramCode);
 
 // Alert Preferences routes
 // @route   GET /api/users/alert-preferences
