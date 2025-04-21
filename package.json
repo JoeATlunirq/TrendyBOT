@@ -13,7 +13,6 @@
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
     "@number-flow/react": "^0.5.9",
-    "@paypal/checkout-server-sdk": "^1.0.3",
     "@paypal/paypal-server-sdk": "^1.0.0",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.1",
