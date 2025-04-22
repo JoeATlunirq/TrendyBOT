@@ -558,36 +558,30 @@ const Settings = () => {
                                             accept="image/png, image/jpeg, image/gif" // Specify accepted types
                                             style={{ display: 'none' }} 
                                         />
-                                        {/* Display Image - Construct URL directly from user context */}
+                                        {/* Display Image - SIMPLIFIED */}
                                         {(() => {
-                                            const relativePath = user?.[PROFILE_PHOTO_URL_COLUMN];
-                                            let finalSrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
-                                            let imageKey = finalSrc; // Use finalSrc for key initially
+                                            // Directly get URL from context
+                                            const photoUrl = user?.[PROFILE_PHOTO_URL_COLUMN];
+                                            let displaySrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
 
-                                            if (relativePath && typeof relativePath === 'string' && relativePath.startsWith('/uploads')) {
-                                                try {
-                                                    const backendOrigin = BACKEND_API_BASE_URL.replace('/api', '');
-                                                    const imageUrl = new URL(relativePath, backendOrigin);
-                                                    imageUrl.searchParams.set('t', Date.now().toString()); // Add cache buster
-                                                    finalSrc = imageUrl.href;
-                                                    imageKey = finalSrc; // Update key if real URL is used
-                                                } catch (e) {
-                                                     console.error("Error constructing image URL during render:", e);
-                                                     // Fallback already set
-                                                }
+                                            // Use the GCS/valid URL if available
+                                            if (photoUrl && typeof photoUrl === 'string' && (photoUrl.startsWith('http://') || photoUrl.startsWith('https://'))) {
+                                                displaySrc = photoUrl;
                                             }
-                                            // Render the img tag directly, passing key explicitly
+                                            
+                                            // Render the img tag
                                             return (
                                                 <img 
-                                                    key={imageKey} 
-                                                    src={finalSrc} 
+                                                    key={displaySrc} // Use src as key to help React notice changes
+                                                    src={displaySrc} 
                                                     alt="Profile Avatar" 
                                                     className="w-16 h-16 rounded-full bg-neutral-600 object-cover border-2 border-neutral-600"
                                                     onError={(e) => { 
                                                         const target = e.target as HTMLImageElement;
-                                                        if (target.src !== generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN])) {
+                                                        const fallbackSrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
+                                                        if (target.src !== fallbackSrc) {
                                                             target.onerror = null; // prevent infinite loop only if not already fallback
-                                                            target.src = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]); // Use helper
+                                                            target.src = fallbackSrc; // Use helper
                                                         }
                                                     }}
                                                 />
