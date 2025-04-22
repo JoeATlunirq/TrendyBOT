@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/use-mobile";
-import logoImage from '../assets/images/logo-txt-pro.svg';
+import logoImage from '@/assets/images/TXT with \'Pro\' (1).svg';
 
 // Constants from Settings page (or move to a shared config)
 const PROFILE_PHOTO_URL_COLUMN = import.meta.env.VITE_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
