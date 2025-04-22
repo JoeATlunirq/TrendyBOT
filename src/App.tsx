@@ -20,9 +20,13 @@ import History from "@/pages/History";
 import AlertPreferences from "@/pages/AlertPreferences";
 import AlertTemplates from "@/pages/AlertTemplates";
 import NotificationSettings from "@/pages/NotificationSettings";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 
 // Layout
 import { DashboardLayout } from "@/components/DashboardLayout";
+// WebSocket Initializer
+import { WebSocketInitializer } from "@/components/WebSocketInitializer";
 
 // Environment Variable for Onboarding Column Name
 const ONBOARDING_COLUMN_NAME = import.meta.env.VITE_ONBOARDING_COLUMN || 'onboarding_complete';
@@ -89,6 +93,8 @@ const AppRoutes = () => (
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
     </Route>
 
     {/* Onboarding */}
@@ -118,10 +124,13 @@ const AppRoutes = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
           <UserSettingsProvider>
-            <AppRoutes />
+            {/* Initialize WebSocket connection after Auth and Settings are available */}
+            <WebSocketInitializer>
+              <AppRoutes />
+            </WebSocketInitializer>
           </UserSettingsProvider>
         </AuthProvider>
       </BrowserRouter>

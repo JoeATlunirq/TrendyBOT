@@ -50,7 +50,7 @@ type TelegramVerificationState = {
     error: string | null;
     isConnecting: boolean;
     codeInput: string;
-    verificationSession?: string; // Add this to store the verification session
+    // verificationSession?: string; // REMOVED - No longer needed
 };
 
 // Helper functions for session storage
@@ -75,8 +75,11 @@ const NotificationSettings = () => {
     // Initialize with clearer states
     const [telegramState, setTelegramState] = useState<TelegramVerificationState>(() => {
         const stored = getStoredTelegramState();
+        // Remove verificationSession from initial state restoration if present
         if (stored) {
-            return stored;
+            // We already deleted the property if it exists, just return the stored object
+            // delete stored.verificationSession; // REMOVED - Property doesn't exist on type anymore
+             return stored;
         }
         return {
             status: 'initial',
@@ -181,7 +184,7 @@ const NotificationSettings = () => {
     }, [updateTelegramState]);
 
     // Debounced save function
-    const debouncedSave = useCallback((newSettings: NotificationSettings) => {
+    const debouncedSave = useCallback((newSettings: Partial<NotificationSettings>) => {
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
         }
@@ -201,8 +204,8 @@ const NotificationSettings = () => {
             try {
                 await updateSettings({
                     notificationSettings: {
-                        ...settings.notificationSettings,  // Preserve other settings
-                        ...newSettings  // Override with new values
+                        ...settings.notificationSettings, // Preserve other settings
+                        ...newSettings // Override with new values
                     }
                 });
                 toast({
@@ -223,31 +226,18 @@ const NotificationSettings = () => {
         }, 1000); // 1 second debounce
     }, [updateSettings, toast, settings]);
 
-    // Handles Discord and Delivery Pref changes
-    const handleOtherInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { name, value } = e.target;
-        if (!localSettings) return;
-        
-        const newSettings = {
-            ...localSettings,
-            discordWebhookUrl: name === 'discordWebhookUrl' ? (value || null) : localSettings.discordWebhookUrl,
-        };
-        
-        setLocalSettings(newSettings);
-        debouncedSave(newSettings);
+    // Updated to take only the relevant field
+    const handleDiscordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { value } = e.target;
+        const newDiscordUrl = value || null; // Treat empty string as null
+        setLocalSettings(prev => prev ? { ...prev, discordWebhookUrl: newDiscordUrl } : { telegramChatId: null, discordWebhookUrl: newDiscordUrl, deliveryPreference: 'Instantly' });
+        debouncedSave({ discordWebhookUrl: newDiscordUrl }); // Save only discord
     };
 
-    // Handles Delivery Pref changes
+    // Updated to take only the relevant field
     const handleSelectChange = (value: string) => {
-        if (!localSettings) return;
-        
-        const newSettings = {
-            ...localSettings,
-            deliveryPreference: value,
-        };
-        
-        setLocalSettings(newSettings);
-        debouncedSave(newSettings);
+        setLocalSettings(prev => prev ? { ...prev, deliveryPreference: value } : { telegramChatId: null, discordWebhookUrl: null, deliveryPreference: value });
+        debouncedSave({ deliveryPreference: value }); // Save only preference
     };
 
     // --- Telegram Connection Logic ---
@@ -257,6 +247,12 @@ const NotificationSettings = () => {
         e?.preventDefault(); // Prevent form submission
         if (!token || !telegramState.chatId || telegramState.isConnecting) return;
 
+        // Validate Chat ID format on frontend too
+        if (!/^-?\d+$/.test(telegramState.chatId)) {
+             toast({ title: "Invalid Chat ID", description: "Please enter a valid numerical Telegram Chat ID.", variant: "destructive" });
+             return;
+        }
+
         try {
             updateTelegramState(prev => ({
                 ...prev,
@@ -265,29 +261,28 @@ const NotificationSettings = () => {
                 error: null
             }));
 
-            const response = await axios.post(
-                `${BACKEND_API_BASE_URL}/users/notifications/telegram/request-code`,
-                { chatId: telegramState.chatId },
+            // Use the new endpoint
+            await axios.post(
+                `${BACKEND_API_BASE_URL}/users/telegram/send-code`, // Updated endpoint
+                { chatId: telegramState.chatId }, // Payload is just the chat ID
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             
-            // Store the verification session ID if provided by the backend
-            const verificationSession = response.data?.verificationSession;
-            
+            // Backend response doesn't contain session ID anymore
             const newState = {
                 status: 'entering_code' as TelegramStatus,
                 chatId: telegramState.chatId,
                 codeInput: '',
                 isConnecting: false,
                 error: null,
-                verificationSession // Store the session ID
+                // verificationSession REMOVED
             };
-            setStoredTelegramState(newState);
+            // Update state using the setter that handles session storage
             updateTelegramState(newState);
             
             toast({ 
                 title: "Verification Code Sent", 
-                description: `Check Telegram for a message from the bot to chat ID ${telegramState.chatId}. Code expires in 5 minutes.`,
+                description: `Check Telegram for a message from the bot. Code expires in 10 minutes.`,
                 variant: "default"
             });
         } catch (error: any) {
@@ -297,7 +292,7 @@ const NotificationSettings = () => {
             
             updateTelegramState(prev => ({
                 ...prev,
-                status: 'entering_chat_id',
+                status: 'entering_chat_id', // Go back to entering ID on error
                 error: message,
                 isConnecting: false
             }));
@@ -307,7 +302,10 @@ const NotificationSettings = () => {
     // Update the verify code handler
     const handleVerifyTelegramCode = async (e?: React.FormEvent) => {
         e?.preventDefault(); // Prevent form submission
-        if (!token || !telegramState.chatId || !telegramState.codeInput || telegramState.isConnecting) return;
+        if (!token || !telegramState.codeInput || telegramState.codeInput.length !== 6 || telegramState.isConnecting) {
+             toast({ title: "Invalid Code", description: "Please enter the 6-digit code from Telegram.", variant: "destructive" });
+             return;
+        }
 
         try {
             updateTelegramState(prev => ({
@@ -317,23 +315,29 @@ const NotificationSettings = () => {
                 error: null
             }));
 
+             // Use the new endpoint and payload
             const response = await axios.post(
-                `${BACKEND_API_BASE_URL}/users/notifications/telegram/verify-code`,
+                `${BACKEND_API_BASE_URL}/users/telegram/verify-code`, // Updated endpoint
                 { 
-                    chatId: telegramState.chatId, 
-                    code: telegramState.codeInput,
-                    verificationSession: telegramState.verificationSession // Send back the session ID
+                    verificationCode: telegramState.codeInput, // Only send the code
+                    // verificationSession REMOVED
                 },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
 
-            // Clear verification session from storage
+            // Clear verification state from storage as we are done
             sessionStorage.removeItem('telegramVerificationState');
+
+            // Get the verified chatId from the backend response
+            const verifiedChatId = response.data?.chatId;
+            if (!verifiedChatId) {
+                 throw new Error("Verification successful, but Chat ID was missing from response.");
+            }
 
             // Update local state to connected
             const connectedState = {
                 status: 'connected' as TelegramStatus,
-                chatId: telegramState.chatId,
+                chatId: verifiedChatId, // Use verified ID from backend
                 codeInput: '',
                 isConnecting: false,
                 error: null
@@ -341,21 +345,9 @@ const NotificationSettings = () => {
             console.log("[handleVerifyTelegramCode] Setting state to connected:", connectedState);
             updateTelegramState(connectedState);
 
-            // Update global settings (this might trigger the useEffect above)
-            if (settings) {
-                const updatedSettings = {
-                    ...settings,
-                    notificationSettings: {
-                        ...settings.notificationSettings,
-                        telegramChatId: telegramState.chatId
-                    }
-                };
-                updateSettings(updatedSettings);
-            }
-
             toast({ 
                 title: "Telegram Connected!", 
-                description: response.data?.message || `Successfully connected Telegram chat ID ${telegramState.chatId}.`,
+                description: response.data?.message || `Successfully connected Telegram.`, // Use backend message
                 variant: "default"
             });
         } catch (error: any) {
@@ -367,42 +359,51 @@ const NotificationSettings = () => {
                 ...prev,
                 error: message,
                 isConnecting: false,
-                status: 'entering_code' // Keep in code entry state on error
+                status: 'entering_code', // Keep in code entry state on error
+                codeInput: '' // Clear code input on error
             }));
         }
     };
     
     const handleDisconnectTelegram = async () => {
         if (!token || telegramState.isConnecting) return;
-        updateTelegramState({ ...telegramState, isConnecting: true, error: null });
+        // Keep track of the currently displayed chat ID for the toast message
+        const currentChatId = telegramState.chatId;
+        updateTelegramState(prev => ({ ...prev, isConnecting: true, error: null }));
         try {
-            await axios.delete(
-                `${BACKEND_API_BASE_URL}/users/notifications/telegram`,
+            // Use POST to the new disconnect endpoint
+            await axios.post(
+                `${BACKEND_API_BASE_URL}/users/telegram/disconnect`, // Updated endpoint
+                {}, // No payload needed
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
-            updateTelegramState({
-                ...telegramState,
-                status: 'entering_chat_id',
+            
+            // Clear local state
+            const disconnectedState = {
+                status: 'entering_chat_id' as TelegramStatus,
                 chatId: '',
-                isConnecting: false
+                codeInput: '',
+                isConnecting: false,
+                error: null
+            };
+            updateTelegramState(disconnectedState);
+
+            toast({ 
+                title: "Telegram Disconnected", 
+                description: `Disconnected Telegram ID ${maskChatId(currentChatId)}.`, 
+                variant: "default" 
             });
-            updateSettings({
-                notificationSettings: {
-                    telegramChatId: null,
-                    discordWebhookUrl: settings?.notificationSettings.discordWebhookUrl || null,
-                    deliveryPreference: settings?.notificationSettings.deliveryPreference || 'Instantly',
-                }
-            });
-            toast({ title: "Telegram Disconnected", description: "Your Telegram connection has been removed.", variant: "default" });
         } catch (error: any) {
              const message = error.response?.data?.message || "Failed to disconnect Telegram.";
             console.error("Telegram disconnect error:", error.response?.data || error);
             toast({ title: "Disconnect Failed", description: message, variant: "destructive" });
-            updateTelegramState({
-                ...telegramState,
-                status: 'connected',
-                isConnecting: false
-            });
+            // Revert state to connected on failure
+            updateTelegramState(prev => ({
+                ...prev,
+                status: 'connected', // Revert status
+                isConnecting: false,
+                error: message // Show the error
+            }));
         }
     };
 
@@ -563,28 +564,15 @@ const NotificationSettings = () => {
     }
 
     // Still need settings guard for Discord/Delivery Prefs access
-    if (!settings) return null; // Should be covered by above, but for TS safety
+    if (!settings || !localSettings) return null; // Added localSettings check for safety
 
     return (
         <div className="container mx-auto py-8 px-4 md:px-6 max-w-4xl">
-             <div className="flex justify-between items-center mb-6">
-                 <div>
-                    <h1 className="text-3xl font-bold text-white font-orbitron">Notification Settings</h1>
-                    <p className="text-neutral-400">Manage channels, delivery preferences, and templates for your alerts.</p>
-                </div>
-                 {/* This button now only saves Discord/Delivery Preferences */}
-                 <Button
-                    onClick={() => debouncedSave(localSettings || { telegramChatId: null, discordWebhookUrl: null, deliveryPreference: 'Instantly' })}
-                    className="bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90"
-                    disabled={isSaving || telegramState.isConnecting}
-                    type="button"
-                >
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Save Prefs
-                </Button>
+             <div className="mb-6">
+                <h1 className="text-3xl font-bold text-white font-orbitron">Notification Settings</h1>
+                <p className="text-neutral-400">Manage channels, delivery preferences, and templates for your alerts.</p>
             </div>
 
-            {/* Use a simple div instead of form as submission is handled by buttons */}
             <div className="space-y-8">
                 {/* Manage Notification Channels Card */}
                 <Card className="bg-neutral-800/50 border-neutral-700/50">
@@ -596,7 +584,7 @@ const NotificationSettings = () => {
                         <CardDescription className="text-neutral-400 pt-1 pl-7">Connect and configure where you receive alerts.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* Email Section (Unchanged) */}
+                        {/* Email Section (No changes) */}
                         <div className="flex items-center justify-between p-4 border border-neutral-700 rounded-md">
                              <div className="space-y-1">
                                 <Label className="text-base text-neutral-200">Email</Label>
@@ -618,7 +606,7 @@ const NotificationSettings = () => {
                             </div>
                         </div>
 
-                        {/* --- Telegram Section (Dynamic UI) --- */}
+                        {/* --- Telegram Section (No structural changes needed, buttons are already separate) --- */}
                         <Card className="bg-neutral-800/50 border-neutral-700/50">
                             <CardHeader>
                                 <div className="flex items-center gap-2">
@@ -641,7 +629,7 @@ const NotificationSettings = () => {
                                                     <span className="font-medium">Connected to Telegram</span>
                             </div>
                                     <p className="text-sm text-neutral-400">
-                                                    Chat ID: {maskChatId(telegramState.chatId)}
+                                                    Chat ID: {maskChatId(telegramState.chatId || 'N/A')} {/* Added default */}
                                                 </p>
                                     </div>
                                             <div className="flex items-center gap-2">
@@ -691,15 +679,14 @@ const NotificationSettings = () => {
                             </CardContent>
                         </Card>
 
-                        {/* Discord Section (Input handler updated) */}
+                        {/* Discord Section (Use handleDiscordInputChange) */}
                         <div className="p-4 border border-neutral-700 rounded-md space-y-2">
-                                <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between">
                                 <Label className="text-base text-neutral-200 flex items-center gap-2">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24"><path fill="currentColor" d="M20.317 4.483A12.12 12.12 0 0 0 12.05 2c-1.82 0-3.53.4-5.086 1.15-.424.213-.806.467-1.14.76-.24.213-.46.448-.654.704-.338.447-.6 .955-.775 1.506C4.13 7.17 4 8.264 4 9.42v6.82c0 1.32.263 2.516.746 3.592.483 1.076 1.18 1.96 2.09 2.652.91.69 2.022 1.166 3.336 1.43a10.07 10.07 0 0 0 3.88.575c.74 0 1.46-.074 2.156-.224a8.89 8.89 0 0 0 3.756-1.781c.894-.69 1.59-1.575 2.075-2.651.484-1.077.746-2.272.746-3.592V9.42c0-1.158-.13-2.25-.39-3.277-.175-.55-.437-1.06-.775-1.507-.193-.256-.414-.49-.654-.703-.335-.293-.717-.547-1.14-.76zm-4.13 8.197c-.654 0-1.18-.53-1.18-1.18s.526-1.18 1.18-1.18c.653 0 1.18.53 1.18 1.18s-.527 1.18-1.18 1.18zm-8.323 0c-.654 0-1.18-.53-1.18-1.18s.526-1.18 1.18-1.18c.653 0 1.18.53 1.18 1.18s-.526 1.18-1.18 1.18z"/></svg> {/* Simple Discord Icon */}
                                     Discord
                                 </Label>
-                                 {/* Basic check if URL seems valid enough to show 'Connected' style - improve if needed */}
-                                {settings?.notificationSettings.discordWebhookUrl && settings?.notificationSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') ? (
+                                {localSettings.discordWebhookUrl && localSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') ? (
                                     <span className="text-xs font-medium text-green-400 bg-green-900/50 px-2 py-1 rounded-md border border-green-700 flex items-center gap-1"><CheckCircle size={14}/>Setup</span>
                                 ) : (
                                     <span className="text-xs font-medium text-neutral-500 bg-neutral-700/50 px-2 py-1 rounded-md border border-neutral-600 flex items-center gap-1"><XCircle size={14}/>Not Setup</span>
@@ -710,32 +697,30 @@ const NotificationSettings = () => {
                                 id="discordWebhookUrl"
                                 name="discordWebhookUrl"
                                 placeholder="Enter your Discord Webhook URL"
-                                value={settings?.notificationSettings.discordWebhookUrl || ''}
-                                onChange={handleOtherInputChange}
+                                value={localSettings.discordWebhookUrl || ''}
+                                onChange={handleDiscordInputChange} // Use specific handler
                                 className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
                                 disabled={isSaving || telegramState.isConnecting}
                             />
                             <p className="text-xs text-neutral-500">Go to Server Settings &gt; Integrations &gt; Webhooks &gt; New Webhook, then copy the URL.</p>
-                                <div className="flex justify-end gap-2 pt-2">
+                            <div className="flex justify-end gap-2 pt-2">
                                     <Button
                                         type="button"
                                         size="sm"
                                         variant="outline"
                                         onClick={() => handleTestNotification('discord')}
-                                        disabled={!settings?.notificationSettings.discordWebhookUrl || !settings?.notificationSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') || isTesting !== null || telegramState.isConnecting}
+                                        disabled={!localSettings.discordWebhookUrl || !localSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') || isTesting !== null || telegramState.isConnecting}
                                         className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white disabled:opacity-50"
                                     >
                                          {isTesting === 'discord' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                                         Test
                                     </Button>
-                                    {/* Keep this disabled button or remove if no plans for OAuth */}
-                                    {/* <Button size="sm" variant="outline" disabled className="border-neutral-600 bg-neutral-700/60 text-neutral-300">Connect (Soon)</Button> */}
                             </div>
                         </div>
                     </CardContent>
                 </Card>
 
-                 {/* Delivery Preferences Card (Redesigned) */}
+                 {/* Delivery Preferences Card */}
                  <Card className="bg-neutral-800/50 border-neutral-700/50">
                     <CardHeader>
                         <div className="flex items-center gap-2">
@@ -756,7 +741,7 @@ const NotificationSettings = () => {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* General Delivery Preference */}
+                        {/* General Delivery Preference (Use handleSelectChange) */}
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
                                 <Label className="text-base text-neutral-200">Default Delivery Schedule</Label>
@@ -768,8 +753,8 @@ const NotificationSettings = () => {
                                 )}
                             </div>
                             <Select
-                                value={settings?.notificationSettings.deliveryPreference}
-                                onValueChange={handleSelectChange}
+                                value={localSettings.deliveryPreference} // Use localSettings
+                                onValueChange={handleSelectChange} // Use specific handler
                                 disabled={isSaving || telegramState.isConnecting}
                             >
                                 <SelectTrigger className="w-full bg-neutral-700/60 border-neutral-600 text-white focus:ring-trendy-yellow disabled:opacity-70">
@@ -807,7 +792,7 @@ const NotificationSettings = () => {
                             </SelectContent>
                         </Select>
                             <div className="text-sm text-neutral-400 space-y-2">
-                                {settings?.notificationSettings.deliveryPreference === 'Instantly' && (
+                                {localSettings.deliveryPreference === 'Instantly' && (
                                     <p className="flex items-center gap-2">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -815,7 +800,7 @@ const NotificationSettings = () => {
                                         Receive notifications immediately as events occur
                                     </p>
                                 )}
-                                {settings?.notificationSettings.deliveryPreference === 'Hourly' && (
+                                {localSettings.deliveryPreference === 'Hourly' && (
                                     <p className="flex items-center gap-2">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <circle cx="12" cy="12" r="10"/>
@@ -824,7 +809,7 @@ const NotificationSettings = () => {
                                         Receive a summary of notifications every hour
                                     </p>
                                 )}
-                                {settings?.notificationSettings.deliveryPreference === 'Daily' && (
+                                {localSettings.deliveryPreference === 'Daily' && (
                                     <p className="flex items-center gap-2">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
@@ -865,9 +850,6 @@ const NotificationSettings = () => {
                         </div>
                     </CardContent>
                 </Card>
-
-                 {/* No longer need a form submit */}
-                {/* <button type="submit" className="hidden">Submit</button> */}
             </div>
         </div>
     );

@@ -1,248 +1,276 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useToast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Loader2, Filter, TrendingUp } from 'lucide-react';
+import { useAlertPreferencesStore, METRIC_KEYS } from '@/stores/alertPreferencesStore';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-// Determine the base API URL based on the environment
-const getApiBaseUrl = () => {
-  if (import.meta.env.PROD) {
-    return '/api'; // Use relative path for Vercel production
-  } else {
-    // Use local backend URL for development
-    return 'http://localhost:5001/api';
-  }
-};
-const BACKEND_API_BASE_URL = getApiBaseUrl();
-
-// Define type for preferences state
-type AlertPreferencesState = {
-    thresholdViews: number;
-    thresholdLikes: number;
-    thresholdComments: number;
-    thresholdVelocity: number;
-    filterChannels: string;
-    filterNiches: string;
-    filterHashtags: string;
-};
-
-// Column Names (Hardcoded - ensure match backend .env/NocoDB)
-const THRESHOLD_VIEWS_COLUMN = 'threshold_views';
-const THRESHOLD_LIKES_COLUMN = 'threshold_likes';
-const THRESHOLD_COMMENTS_COLUMN = 'threshold_comments';
-const THRESHOLD_VELOCITY_COLUMN = 'threshold_velocity';
-const FILTER_CHANNELS_COLUMN = 'filter_channels';
-const FILTER_NICHES_COLUMN = 'filter_niches';
-const FILTER_HASHTAGS_COLUMN = 'filter_hashtags';
+// Define types based on store structure (or import if exported from store)
+// No longer needed here as we directly use store types
 
 const AlertPreferences = () => {
     const { token } = useAuth();
-    const { toast } = useToast();
-    const [preferences, setPreferences] = useState<AlertPreferencesState | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
+    
+    // --- Use Zustand Store ---
+    const thresholds = useAlertPreferencesStore(state => state.thresholds);
+    const filters = useAlertPreferencesStore(state => state.filters);
+    const isLoading = useAlertPreferencesStore(state => state.isLoading);
+    const isSaving = useAlertPreferencesStore(state => state.isSavingThresholds);
+    const isResetting = useAlertPreferencesStore(state => state.isResettingThresholds);
+    const {
+        fetchPreferences,
+        setThresholdField,
+        setFilterField,
+        saveThresholds,
+        resetThresholds
+    } = useAlertPreferencesStore(state => state.actions);
+    // ------------------------
 
-    // Fetch current preferences on load
+    // Fetch preferences on mount or token change
     useEffect(() => {
-        const fetchPreferences = async () => {
-            if (!token) return;
-            setIsLoading(true);
-            try {
-                const response = await axios.get(`${BACKEND_API_BASE_URL}/users/alert-preferences`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                // Map response keys (which should match NocoDB columns) to state keys
-                setPreferences({
-                    thresholdViews: response.data[THRESHOLD_VIEWS_COLUMN] ?? 0,
-                    thresholdLikes: response.data[THRESHOLD_LIKES_COLUMN] ?? 0,
-                    thresholdComments: response.data[THRESHOLD_COMMENTS_COLUMN] ?? 0,
-                    thresholdVelocity: response.data[THRESHOLD_VELOCITY_COLUMN] ?? 0,
-                    filterChannels: response.data[FILTER_CHANNELS_COLUMN] ?? '',
-                    filterNiches: response.data[FILTER_NICHES_COLUMN] ?? '',
-                    filterHashtags: response.data[FILTER_HASHTAGS_COLUMN] ?? '',
-                });
-            } catch (error: any) {
-                console.error("Failed to fetch alert preferences:", error);
-                toast({ title: "Error Loading Preferences", description: error.response?.data?.message || error.message, variant: "destructive" });
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        fetchPreferences();
-    }, [token, toast]);
+        fetchPreferences(token);
+    }, [token, fetchPreferences]);
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // --- Event Handlers ---
+    const handleThresholdInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
-        setPreferences(prev => prev ? { ...prev, [name]: value } : null);
+        setThresholdField(name as any, value);
     };
 
-    const handleSavePreferences = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!token || !preferences) return;
-        setIsSaving(true);
-
-        try {
-             // Send state keys, backend controller maps them to NocoDB columns
-            const response = await axios.put(
-                `${BACKEND_API_BASE_URL}/users/alert-preferences`,
-                preferences, // Send the whole state object
-                { headers: { 'Authorization': `Bearer ${token}` }}
-            );
-            toast({ title: "Preferences Saved", description: response.data?.message || "Alert preferences updated successfully." });
-            // Optionally update state with response.data.preferences if needed
-        } catch (error: any) {
-             const message = error.response?.data?.message || "Failed to save preferences.";
-            toast({ title: "Save Failed", description: message, variant: "destructive" });
-            console.error("Save preferences error:", error.response?.data || error);
-        } finally {
-            setIsSaving(false);
-        }
+    const handleThresholdSelectChange = (name: string, value: string) => {
+        setThresholdField(name as any, value);
     };
+
+    const handleFilterInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFilterField(name as keyof typeof filters, value);
+    };
+
+    // Combined Save/Reset Handlers
+    const handleSavePreferencesClick = () => saveThresholds(token);
+    const handleResetPreferencesClick = () => resetThresholds(token);
+    // --------------------------------------------------
 
     if (isLoading) {
         return <div className="container mx-auto py-8 px-4 md:px-6 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto" /></div>;
     }
 
-    if (!preferences) {
-         return <div className="container mx-auto py-8 px-4 md:px-6 text-center text-red-400">Failed to load preferences. Please try again later.</div>;
+    // Check if either state object from store is null
+    if (!thresholds || !filters) {
+         return <div className="container mx-auto py-8 px-4 md:px-6 text-center text-red-400">Failed to load preferences. Please try refreshing.</div>;
+    }
+
+    const getNullableInputValue = (value: number | null | undefined): string => {
+        return value === null || value === undefined ? '' : String(value);
     }
 
     return (
         <div className="container mx-auto py-8 px-4 md:px-6 max-w-4xl">
-            <div className="flex justify-between items-center mb-6">
-                <div>
-                    <h1 className="text-3xl font-bold text-white font-orbitron">Alert Preferences</h1>
-                    <p className="text-neutral-400">Configure thresholds and filters for your YouTube Shorts alerts.</p>
-                </div>
-                <Button 
-                    onClick={handleSavePreferences} 
-                    className="bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90"
-                    disabled={isSaving}
-                >
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Save Preferences
-                </Button>
+            <div className="mb-6">
+                <h1 className="text-3xl font-bold text-white font-orbitron">Alert Preferences</h1>
+                <p className="text-neutral-400">Configure thresholds and filters for your YouTube Shorts alerts.</p>
             </div>
 
-            <form onSubmit={handleSavePreferences} className="space-y-8">
-                {/* Alert Thresholds Section */} 
-                <Card className="bg-neutral-800/50 border-neutral-700/50">
-                    <CardHeader>
-                         <div className="flex items-center gap-2">
-                             <TrendingUp className="h-5 w-5 text-trendy-yellow" />
-                            <CardTitle className="text-white font-orbitron">Alert Thresholds</CardTitle>
-                         </div>
-                        <CardDescription className="text-neutral-400 pt-1 pl-7">Set the minimum metrics a Short must reach to trigger an alert.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                            <Label htmlFor="thresholdViews" className="text-neutral-300">Views Threshold</Label>
-                            <Input 
-                                id="thresholdViews" 
-                                name="thresholdViews"
-                                type="number"
-                                value={preferences.thresholdViews}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                            <p className="text-xs text-neutral-500">Minimum total views.</p>
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="thresholdLikes" className="text-neutral-300">Likes Threshold</Label>
-                            <Input 
-                                id="thresholdLikes" 
-                                name="thresholdLikes"
-                                type="number"
-                                value={preferences.thresholdLikes}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                            <p className="text-xs text-neutral-500">Minimum total likes.</p>
-                        </div>
-                         <div className="space-y-2">
-                            <Label htmlFor="thresholdComments" className="text-neutral-300">Comments Threshold</Label>
-                            <Input 
-                                id="thresholdComments" 
-                                name="thresholdComments"
-                                type="number"
-                                value={preferences.thresholdComments}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                            <p className="text-xs text-neutral-500">Minimum total comments.</p>
-                        </div>
-                         <div className="space-y-2">
-                            <Label htmlFor="thresholdVelocity" className="text-neutral-300">Engagement Velocity (Views/Hour)</Label>
-                            <Input 
-                                id="thresholdVelocity" 
-                                name="thresholdVelocity"
-                                type="number"
-                                value={preferences.thresholdVelocity}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                             <p className="text-xs text-neutral-500">Minimum views gained per hour.</p>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                 {/* Filters Section */} 
+            <div className="space-y-8">
+                {/* Filters Section (Step 1) */}
                 <Card className="bg-neutral-800/50 border-neutral-700/50">
                     <CardHeader>
                         <div className="flex items-center gap-2">
                              <Filter className="h-5 w-5 text-trendy-yellow" />
-                             <CardTitle className="text-white font-orbitron">Filters</CardTitle>
+                             <CardTitle className="text-white font-orbitron">Step 1: Define Content Scope</CardTitle>
                         </div>
-                        <CardDescription className="text-neutral-400 pt-1 pl-7">Optionally filter alerts by specific channels, niches, or hashtags.</CardDescription>
+                        <CardDescription className="text-neutral-400 pt-1 pl-7">Specify which channels you want to monitor for alerts.</CardDescription>
                     </CardHeader>
-                    <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <CardContent className="grid grid-cols-1 gap-6">
+                        {/* Channels - Updated Label and Help Text */}
                         <div className="space-y-2">
-                            <Label htmlFor="filterChannels" className="text-neutral-300">Filter by Channel(s)</Label>
-                            <Input 
-                                id="filterChannels" 
+                            <Label htmlFor="filterChannels" className="text-neutral-300">Filter by YouTube Channel ID(s)</Label>
+                            <Input
+                                id="filterChannels"
                                 name="filterChannels"
-                                placeholder="Enter channel IDs, comma-separated" 
-                                value={preferences.filterChannels}
-                                onChange={handleInputChange}
+                                placeholder="UCxxxxxxxxxxxxxxxxx, UCyyyyyyyyyyyyyyyyy"
+                                value={filters.filterChannels}
+                                onChange={handleFilterInputChange}
                                 className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
                             />
-                            <p className="text-xs text-neutral-500">Leave blank to monitor all channels.</p>
-                        </div>
-                         <div className="space-y-2">
-                            <Label htmlFor="filterNiches" className="text-neutral-300">Filter by Niche(s)</Label>
-                            <Input 
-                                id="filterNiches" 
-                                name="filterNiches"
-                                placeholder="e.g., gaming, finance, cooking" 
-                                value={preferences.filterNiches}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                             <p className="text-xs text-neutral-500">Enter niches, comma-separated.</p>
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="filterHashtags" className="text-neutral-300">Filter by Hashtag(s)</Label>
-                            <Input 
-                                id="filterHashtags" 
-                                name="filterHashtags"
-                                placeholder="#shorts, #viral, #challenge" 
-                                value={preferences.filterHashtags}
-                                onChange={handleInputChange}
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                            />
-                             <p className="text-xs text-neutral-500">Enter hashtags including '#', comma-separated.</p>
+                            <p className="text-xs text-neutral-500">
+                                Enter one or more YouTube Channel IDs, separated by commas. Find the ID in the channel's URL (e.g., youtube.com/channel/&lt;Channel ID&gt;). Leave blank to monitor all relevant channels.
+                            </p>
                         </div>
                     </CardContent>
-                    {/* No separate save button needed here as the top button saves all */} 
                 </Card>
 
-                 {/* Hidden submit button for form semantics if needed, or rely on top button */} 
-                 {/* <button type="submit" className="hidden">Submit</button> */}
-            </form>
+                 {/* Thresholds Section (Step 2) */}
+                <Card className="bg-neutral-800/50 border-neutral-700/50">
+                    <CardHeader>
+                         <div className="flex items-center gap-2">
+                             <TrendingUp className="h-5 w-5 text-trendy-yellow" />
+                             <CardTitle className="text-white font-orbitron">Step 2: Set Alert Conditions</CardTitle>
+                         </div>
+                        <CardDescription className="text-neutral-400 pt-1 pl-7">Define the metric conditions that trigger alerts for the content specified above.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-8">
+                        {/* Views - Updated Layout */}
+                        <div className="space-y-2">
+                            <Label htmlFor="thresholdViews" className="text-neutral-300">Views Threshold</Label>
+                            <div className="flex gap-3 items-center">
+                                <Input
+                                    id="thresholdViews"
+                                    name="thresholdViews"
+                                    type="number"
+                                    placeholder="e.g., 10000"
+                                    value={thresholds.thresholdViews}
+                                    onChange={handleThresholdInputChange}
+                                    className="flex-grow bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
+                                />
+                                <div className="flex items-center gap-2 whitespace-nowrap">
+                                    <Label htmlFor="thresholdViewsTimeWindowHours" className="text-xs text-neutral-400">Within</Label>
+                                    <Input
+                                        id="thresholdViewsTimeWindowHours"
+                                        name="thresholdViewsTimeWindowHours"
+                                        type="number"
+                                        placeholder="Hours"
+                                        value={getNullableInputValue(thresholds.thresholdViewsTimeWindowHours)}
+                                        onChange={handleThresholdInputChange}
+                                        className="w-20 bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow text-xs p-2"
+                                    />
+                                     <span className="text-xs text-neutral-400">Hrs</span>
+                                </div>
+                            </div>
+                            <p className="text-xs text-neutral-500">Min views required. Optionally set time limit (hours after posting).</p>
+                        </div>
+                        {/* Likes - Updated Layout */}
+                        <div className="space-y-2">
+                            <Label htmlFor="thresholdLikes" className="text-neutral-300">Likes Threshold</Label>
+                             <div className="flex gap-3 items-center">
+                                <Input
+                                    id="thresholdLikes"
+                                    name="thresholdLikes"
+                                    type="number"
+                                    placeholder="e.g., 1000"
+                                    value={thresholds.thresholdLikes}
+                                    onChange={handleThresholdInputChange}
+                                    className="flex-grow bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
+                                />
+                                <div className="flex items-center gap-2 whitespace-nowrap">
+                                    <Label htmlFor="thresholdLikesTimeWindowHours" className="text-xs text-neutral-400">Within</Label>
+                                    <Input
+                                        id="thresholdLikesTimeWindowHours"
+                                        name="thresholdLikesTimeWindowHours"
+                                        type="number"
+                                        placeholder="Hours"
+                                        value={getNullableInputValue(thresholds.thresholdLikesTimeWindowHours)}
+                                        onChange={handleThresholdInputChange}
+                                        className="w-20 bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow text-xs p-2"
+                                    />
+                                     <span className="text-xs text-neutral-400">Hrs</span>
+                                </div>
+                            </div>
+                            <p className="text-xs text-neutral-500">Min likes required. Optionally set time limit (hours after posting).</p>
+                        </div>
+                         {/* Comments - Updated Layout */}
+                         <div className="space-y-2">
+                            <Label htmlFor="thresholdComments" className="text-neutral-300">Comments Threshold</Label>
+                             <div className="flex gap-3 items-center">
+                                <Input
+                                    id="thresholdComments"
+                                    name="thresholdComments"
+                                    type="number"
+                                    placeholder="e.g., 100"
+                                    value={thresholds.thresholdComments}
+                                    onChange={handleThresholdInputChange}
+                                    className="flex-grow bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
+                                />
+                                <div className="flex items-center gap-2 whitespace-nowrap">
+                                    <Label htmlFor="thresholdCommentsTimeWindowHours" className="text-xs text-neutral-400">Within</Label>
+                                    <Input
+                                        id="thresholdCommentsTimeWindowHours"
+                                        name="thresholdCommentsTimeWindowHours"
+                                        type="number"
+                                        placeholder="Hours"
+                                        value={getNullableInputValue(thresholds.thresholdCommentsTimeWindowHours)}
+                                        onChange={handleThresholdInputChange}
+                                        className="w-20 bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow text-xs p-2"
+                                    />
+                                    <span className="text-xs text-neutral-400">Hrs</span>
+                                </div>
+                            </div>
+                            <p className="text-xs text-neutral-500">Min comments required. Optionally set time limit (hours after posting).</p>
+                        </div>
+                         {/* Velocity */}
+                         <div className="space-y-2">
+                            <Label htmlFor="thresholdVelocity" className="text-neutral-300">Engagement Velocity (Views/Hour)</Label>
+                            <Input
+                                id="thresholdVelocity"
+                                name="thresholdVelocity"
+                                type="number"
+                                value={thresholds.thresholdVelocity}
+                                onChange={handleThresholdInputChange}
+                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
+                            />
+                             <p className="text-xs text-neutral-500">Minimum views gained per hour.</p>
+                        </div>
+
+                        {/* --- Relative Performance --- */}
+                        <div className="space-y-4 p-4 rounded-md border border-neutral-700/60 bg-neutral-800/40 lg:col-span-2 flex flex-col sm:flex-row sm:items-end gap-4">
+                            <div className="space-y-2 flex-grow">
+                                <Label htmlFor="thresholdRelativeViewPerformancePercent" className="text-neutral-300">Relative Performance Threshold (%)</Label>
+                                <Input
+                                    id="thresholdRelativeViewPerformancePercent"
+                                    name="thresholdRelativeViewPerformancePercent"
+                                    type="number"
+                                    placeholder="e.g., 150 (means 150% of avg)"
+                                    value={getNullableInputValue(thresholds.thresholdRelativeViewPerformancePercent)}
+                                    onChange={handleThresholdInputChange}
+                                    className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
+                                />
+                                <p className="text-xs text-neutral-500">Trigger if views exceed this % of the selected average. Leave blank to disable.</p>
+                            </div>
+                            <div className="space-y-2 sm:w-[200px]">
+                                <Select
+                                    name="thresholdRelativeViewMetric"
+                                    value={thresholds.thresholdRelativeViewMetric}
+                                    onValueChange={(value) => handleThresholdSelectChange('thresholdRelativeViewMetric', value)}
+                                >
+                                    <SelectTrigger className="w-full bg-neutral-700/60 border-neutral-600 text-white focus:ring-trendy-yellow">
+                                        <SelectValue placeholder="Select avg..." />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-neutral-800 border-neutral-600 text-white">
+                                        <SelectItem value="7d_avg_views" className="hover:bg-neutral-700 focus:bg-neutral-700 cursor-pointer">7-Day Avg Views</SelectItem>
+                                        <SelectItem value="14d_avg_views" className="hover:bg-neutral-700 focus:bg-neutral-700 cursor-pointer">14-Day Avg Views</SelectItem>
+                                        <SelectItem value="30d_avg_views" className="hover:bg-neutral-700 focus:bg-neutral-700 cursor-pointer">30-Day Avg Views</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-neutral-500 sm:invisible">.</p>
+                            </div>
+                        </div>
+
+                    </CardContent>
+                    <CardFooter className="flex justify-end gap-3 pt-6">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={handleResetPreferencesClick}
+                            disabled={isResetting}
+                            className="text-neutral-400 hover:text-white hover:bg-neutral-700/50 mr-auto"
+                        >
+                             {isResetting ? <Loader2 className="mr-2 h-4 w-4 animate-spin -ml-1" /> : null}
+                             Reset All Preferences
+                        </Button>
+                        <Button
+                            onClick={handleSavePreferencesClick}
+                            className="bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90"
+                            disabled={isSaving}
+                        >
+                            {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Save All Preferences
+                        </Button>
+                    </CardFooter>
+                </Card>
+            </div>
         </div>
     );
 };
