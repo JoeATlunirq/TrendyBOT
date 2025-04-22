@@ -131,11 +131,11 @@ const verifyPayPalWebhook = async (req, res, next) => {
         }
         
         // Calculate CRC32 checksum
-        const crc32Value = crc32(rawBody); // Calculate as a number
-        // Format as 8-character lowercase hex string (standard for 32-bit)
-        const crc32ChecksumString = crc32Value.toString(16).padStart(8, '0'); 
+        const crc32Value = crc32(rawBody); 
+        // Format as 8-character UPPERCASE hex string 
+        const crc32ChecksumString = crc32Value.toString(16).toUpperCase().padStart(8, '0'); 
         console.log(`Calculated CRC32 Value (Number): ${crc32Value}`);
-        console.log(`Calculated CRC32 Checksum (Hex String, padded): ${crc32ChecksumString}`);
+        console.log(`Calculated CRC32 Checksum (UPPERCASE Hex String, padded): ${crc32ChecksumString}`);
         
         const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32ChecksumString}`;
         const expectedSignatureBaseBuffer = Buffer.from(expectedSignatureBase, 'utf-8'); 
@@ -151,8 +151,7 @@ const verifyPayPalWebhook = async (req, res, next) => {
             let nodeAlgorithm = authAlgo;
             if (authAlgo.toUpperCase() === 'SHA256WITHRSA') {
                 nodeAlgorithm = 'RSA-SHA256';
-            }
-             // Add mapping for other algorithms if needed
+            } 
             else { 
                  console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification will likely fail.`);
             }
