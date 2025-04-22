@@ -66,9 +66,6 @@ function initializePayPalClient() {
     }
 }
 
-// Initialize client once when the middleware module loads
-const paypalClientInstance = initializePayPalClient();
-
 /**
  * Verifies the signature of an incoming PayPal webhook MANUALLY based on API docs.
  * Reference: https://developer.paypal.com/docs/api/webhooks/v1/#verify-webhook-signature
@@ -76,11 +73,15 @@ const paypalClientInstance = initializePayPalClient();
 const verifyPayPalWebhook = async (req, res, next) => {
     console.log("Attempting MANUAL PayPal webhook verification...");
 
-    // Note: The paypalClientInstance isn't directly used for MANUAL verification,
-    // but it's good practice to ensure the SDK is generally configured correctly.
+    // Initialize client *inside* the handler
+    const paypalClientInstance = initializePayPalClient(); 
+    
     if (!paypalClientInstance) {
-         console.error("PayPal Client instance is null. Cannot proceed with verification (config error).");
-         return res.status(500).send('Webhook processing failed: Server configuration error.');
+         // Log the error, but maybe verification can proceed if client isn't strictly needed?
+         // For manual verification, the client isn't used, but failure indicates config issue.
+         console.error("PayPal Client instance could not be initialized (config error). Verification might proceed but indicates deeper issues.");
+         // Decide if we should block or allow. Blocking is safer for now.
+          return res.status(500).send('Webhook processing failed: Server configuration error initializing PayPal client.');
     }
     
     const transmissionId = req.headers['paypal-transmission-id'];
@@ -163,7 +164,12 @@ const verifyPayPalWebhook = async (req, res, next) => {
             return res.status(403).send('Webhook verification failed: Invalid signature.');
         }
     } catch (error) {
+        // Catch errors during the manual verification steps
         console.error('Error during manual webhook verification process:', error);
+        // Add more specific error checking if needed (e.g., distinguish cert fetch vs crypto error)
+        if (error?.response?.status === 404 && error.config?.url === certUrl) {
+            return res.status(500).send('Webhook verification failed: Could not fetch certificate.');
+        }
         return res.status(500).send('Webhook verification failed due to server error.');
     }
 };
