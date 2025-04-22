@@ -1000,8 +1000,8 @@ const updateProfilePhoto = async (req, res, next) => {
             },
             // Make the file publicly readable - REMOVED because bucket has Uniform access
             // public: true, 
-            // Optional: Predefined ACL for simplicity, alternatives exist
-            // predefinedAcl: 'publicRead',
+            // Explicitly set predefined ACL to publicRead - TRY THIS
+            predefinedAcl: 'publicRead',
         });
 
         // --- DETAILED LOGGING ---
