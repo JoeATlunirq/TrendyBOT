@@ -998,8 +998,8 @@ const updateProfilePhoto = async (req, res, next) => {
                 // Optional: Add cache control for browsers
                 // cacheControl: 'public, max-age=31536000',
             },
-            // Make the file publicly readable
-            public: true,
+            // Make the file publicly readable - REMOVED because bucket has Uniform access
+            // public: true, 
             // Optional: Predefined ACL for simplicity, alternatives exist
             // predefinedAcl: 'publicRead',
         });
