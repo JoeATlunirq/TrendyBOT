@@ -250,7 +250,7 @@ const Settings = () => {
         setIsPhotoUploading(true);
 
         try {
-            const response = await axios.post(
+            const response = await axios.put(
                 `${BACKEND_API_BASE_URL}/users/profile/photo`,
                 formData,
                 { headers: { 'Authorization': `Bearer ${token}` }}
