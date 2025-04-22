@@ -250,58 +250,38 @@ const Settings = () => {
         setIsPhotoUploading(true);
 
         try {
-            const response = await axios.put(
+            const response = await axios.post(
                 `${BACKEND_API_BASE_URL}/users/profile/photo`,
                 formData,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'multipart/form-data' // Important for file uploads
-                    }
-                }
+                { headers: { 'Authorization': `Bearer ${token}` }}
             );
 
-            if (response.data && response.data.photoUrl) {
-                const newPhotoUrlPath = response.data.photoUrl; // This is just the path, e.g., /uploads/...
-                
-                try {
-                    // Use URL constructor for robust origin extraction and path joining
-                    const backendUrl = new URL(BACKEND_API_BASE_URL);
-                    // No need to construct full URL here anymore
-                    
-                    // Add cache-busting timestamp
-                    // No need for timestamp here
-                    
-                    // Remove debug logs for URL construction
-                    /* 
-                    console.log("[Photo Upload] Backend URL Base:", BACKEND_API_BASE_URL);
-                    console.log("[Photo Upload] Backend Origin:", backendUrl.origin);
-                    console.log("[Photo Upload] Received Path:", newPhotoUrlPath);
-                    */
- 
-                    // *** DO NOT set temporary display state ***
- 
-                    // 1. Update localStorage with the NEW relative path
+            // --- SIMPLIFIED SUCCESS HANDLING ---
+            if (response.data?.photoUrl) {
+                const fullGcsUrl = response.data.photoUrl; // Backend sends the full URL now
+                console.log("[Photo Upload] Received GCS URL:", fullGcsUrl);
+
+                // Validate if it looks like a URL (basic check)
+                if (typeof fullGcsUrl === 'string' && fullGcsUrl.startsWith('https://')) {
+                    // 1. Update AuthContext immediately with the new full URL
+                    updateUserContext({ [PROFILE_PHOTO_URL_COLUMN]: fullGcsUrl });
+
+                    // 2. Update localStorage with the new full URL
                     if (user) {
-                        const updatedUser = { ...user, [PROFILE_PHOTO_URL_COLUMN]: newPhotoUrlPath }; // Store the relative path
-                        localStorage.setItem('trendy_user', JSON.stringify(updatedUser)); 
+                        const updatedUser = { ...user, [PROFILE_PHOTO_URL_COLUMN]: fullGcsUrl };
+                        localStorage.setItem('trendy_user', JSON.stringify(updatedUser));
                     }
-                     
-                    // 2. Trigger AuthContext refresh using updateUserContext
-                    updateUserContext({ [PROFILE_PHOTO_URL_COLUMN]: newPhotoUrlPath });
-                    
+
                     toast({ title: "Photo Updated", description: response.data.message || "Your profile photo has been updated." });
-
-                    // 3. Force reload as a workaround to update context - REMOVED
-                    // window.location.reload(); 
-
-                 } catch (urlError) {
-                     console.error("Error constructing image URL:", urlError);
-                     toast({ title: "Update Partially Failed", description: "Photo uploaded, but failed to construct display URL.", variant: "destructive" });
-                 }
+                } else {
+                    // Handle case where the received URL is invalid
+                    console.error("[Photo Upload] Invalid URL received from backend:", fullGcsUrl);
+                    toast({ title: "Update Error", description: "Received an invalid photo URL from the server.", variant: "destructive" });
+                }
+                // --- END SIMPLIFIED HANDLING ---
 
             } else {
-                throw new Error("Invalid response from server during photo upload.");
+                throw new Error("Invalid response from server during photo upload (missing photoUrl).");
             }
 
         } catch (error: any) {

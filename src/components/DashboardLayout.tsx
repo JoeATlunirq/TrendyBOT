@@ -69,22 +69,15 @@ export const DashboardLayout: React.FC = () => {
   // Function to get the final avatar src (absolute URL or fallback)
   const getAvatarSrc = () => {
       const profileName = user?.[NAME_COLUMN];
-      const relativePath = user?.[PROFILE_PHOTO_URL_COLUMN];
-      let finalSrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
+      const storedUrl = user?.[PROFILE_PHOTO_URL_COLUMN];
 
-      if (relativePath && typeof relativePath === 'string' && relativePath.startsWith('/uploads')) {
-          try {
-              const backendOrigin = BACKEND_API_BASE_URL.replace('/api', '');
-              const imageUrl = new URL(relativePath, backendOrigin);
-              // Add timestamp? Maybe not needed here if context updates handle it
-              // imageUrl.searchParams.set('t', Date.now().toString()); 
-              finalSrc = imageUrl.href;
-          } catch (e) {
-              console.error("Error constructing avatar URL:", e);
-              // Fallback already set
-          }
+      // Check if the stored URL is a valid absolute URL (starts with http/https)
+      if (storedUrl && typeof storedUrl === 'string' && (storedUrl.startsWith('http://') || storedUrl.startsWith('https://'))) {
+          return storedUrl; // Use the full URL directly from GCS or previous uploads
       }
-      return finalSrc;
+
+      // If not a valid URL or not present, generate fallback
+      return generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
   };
 
   const avatarSrc = getAvatarSrc(); // Calculate once per render

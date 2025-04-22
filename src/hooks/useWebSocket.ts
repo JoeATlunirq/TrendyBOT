@@ -11,7 +11,20 @@ interface WebSocketMessage {
   token?: string; // For sending auth token
 }
 
-const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL || 'ws://localhost:5001'; // Use env var
+// Determine WebSocket URL based on environment
+const getWebSocketUrl = () => {
+  if (import.meta.env.PROD) {
+    // Use wss:// and the window's host for production
+    // Assumes frontend and backend are served on the same domain
+    const host = window.location.host;
+    return `wss://${host}`;
+  } else {
+    // Use local ws:// address or environment variable for development
+    return import.meta.env.VITE_WEBSOCKET_URL || 'ws://localhost:5001';
+  }
+};
+
+const WEBSOCKET_URL = getWebSocketUrl();
 
 // Define keys based on AuthContext/backend structure
 const TELEGRAM_VERIFIED_KEY = import.meta.env.VITE_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified';
