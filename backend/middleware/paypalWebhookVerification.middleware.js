@@ -94,6 +94,11 @@ const verifyPayPalWebhook = async (req, res, next) => {
         return res.status(400).send('Webhook verification failed: Missing parameters or empty body.');
     }
 
+    // Log Body Sample
+    console.log(`Raw Body Received (Buffer Length: ${Buffer.byteLength(rawBody)})`);
+    console.log(`Raw Body Start (up to 100 chars): ${rawBody.slice(0, 100).toString('utf-8')}`);
+    console.log(`Raw Body End (last up to 100 chars): ${rawBody.slice(-100).toString('utf-8')}`);
+
     try {
         // --- Step 1: Fetch the certificate --- 
         console.log(`Fetching certificate from: ${certUrl}`);
@@ -120,7 +125,6 @@ const verifyPayPalWebhook = async (req, res, next) => {
         }
 
         // --- Step 4: Construct Signature String --- 
-        // Ensure rawBody is definitely a Buffer
         if (!Buffer.isBuffer(rawBody)) {
             console.error("rawBody is not a Buffer before CRC calculation!");
             return res.status(500).send('Webhook verification failed: Invalid body type.');
@@ -128,12 +132,13 @@ const verifyPayPalWebhook = async (req, res, next) => {
         
         // Calculate CRC32 checksum
         const crc32Value = crc32(rawBody); // Calculate as a number
-        const crc32ChecksumString = crc32Value.toString(16); // Convert to hex string
+        // Format as 8-character lowercase hex string (standard for 32-bit)
+        const crc32ChecksumString = crc32Value.toString(16).padStart(8, '0'); 
         console.log(`Calculated CRC32 Value (Number): ${crc32Value}`);
-        console.log(`Calculated CRC32 Checksum (Hex String): ${crc32ChecksumString}`);
+        console.log(`Calculated CRC32 Checksum (Hex String, padded): ${crc32ChecksumString}`);
         
         const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32ChecksumString}`;
-        const expectedSignatureBaseBuffer = Buffer.from(expectedSignatureBase, 'utf-8'); // Use explicit encoding
+        const expectedSignatureBaseBuffer = Buffer.from(expectedSignatureBase, 'utf-8'); 
         console.log("Constructed signature base string: " + expectedSignatureBase);
         console.log("Constructed signature base Buffer length: " + expectedSignatureBaseBuffer.length);
 
@@ -159,7 +164,7 @@ const verifyPayPalWebhook = async (req, res, next) => {
 
             isVerified = crypto.verify(
                 nodeAlgorithm, 
-                expectedSignatureBaseBuffer, // Use the explicitly encoded buffer
+                expectedSignatureBaseBuffer, 
                 publicKey, 
                 signatureBuffer 
             );
