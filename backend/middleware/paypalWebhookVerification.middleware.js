@@ -20,51 +20,54 @@ if (paypal && paypal.Webhooks) { // Or maybe paypal.webhooks?
 
 /**
  * Creates and configures a PayPal API client instance using @paypal/paypal-server-sdk.
- * Returns null if configuration fails (e.g., missing env vars or SDK components).
+ * Returns null if configuration fails.
+ * Note: This client instance is NOT used for the manual verification below,
+ * but is set up for potential future use of the SDK's controllers.
  */
 function initializePayPalClient() {
     const clientId = process.env.PAYPAL_CLIENT_ID;
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
     const mode = process.env.PAYPAL_MODE || 'sandbox';
 
-    // Log the values being read from environment
     console.log(`Initializing PayPal Client: Mode='${mode}', ClientID exists? ${!!clientId}, ClientSecret exists? ${!!clientSecret}`);
 
     if (!clientId || !clientSecret) {
-        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing or empty in environment variables.');
+        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing or empty.');
         return null;
     }
 
+    // Check required SDK components based on .NET example structure
     if (!paypal || !paypal.Client || !paypal.Environment || !paypal.Environment.Sandbox || !paypal.Environment.Live) {
-        console.error("PayPal SDK Client or Environment classes not found! Check SDK installation/version.");
+        console.error("PayPal SDK Client or Environment classes not found! Check SDK installation/version and structure.");
+        console.log("Available keys on paypal object:", Object.keys(paypal || {}));
         return null;
     }
 
-    const environment = mode === 'live' 
-        ? paypal.Environment.Live 
+    const environment = mode === 'live'
+        ? paypal.Environment.Live // Assuming direct access based on .NET example
         : paypal.Environment.Sandbox;
-    
-    // Log before attempting instantiation
+
     console.log("Attempting to instantiate paypal.Client with environment:", environment);
-    console.log("Credentials Used: ClientID=", clientId ? 'PROVIDED' : 'MISSING', " Secret=", clientSecret ? 'PROVIDED' : 'MISSING');
 
     try {
-        const clientConfig = {
+        // Use constructor matching .NET example's builder pattern intent
+        const client = new paypal.Client({
             clientCredentialsAuthCredentials: {
                 oAuthClientId: clientId,
                 oAuthClientSecret: clientSecret
             },
             environment: environment,
-        };
-        console.log("Using Client Config:", JSON.stringify(clientConfig, null, 2)); // Log the config object
-        const client = new paypal.Client(clientConfig);
+        });
         console.log(`PayPal client initialized successfully for ${mode.toUpperCase()} mode.`);
         return client;
     } catch (error) {
-        console.error("Error initializing PayPal Client:", error); // Ensure the actual error is logged
+        console.error("Error initializing PayPal Client:", error);
         return null;
     }
 }
+
+// Initialize client once, primarily as a configuration check
+const paypalClientInstance = initializePayPalClient(); 
 
 /**
  * Verifies the signature of an incoming PayPal webhook MANUALLY based on API docs.
@@ -73,15 +76,9 @@ function initializePayPalClient() {
 const verifyPayPalWebhook = async (req, res, next) => {
     console.log("Attempting MANUAL PayPal webhook verification...");
 
-    // Initialize client *inside* the handler
-    const paypalClientInstance = initializePayPalClient(); 
-    
+    // Log if client init failed earlier, but proceed with manual check
     if (!paypalClientInstance) {
-         // Log the error, but maybe verification can proceed if client isn't strictly needed?
-         // For manual verification, the client isn't used, but failure indicates config issue.
-         console.error("PayPal Client instance could not be initialized (config error). Verification might proceed but indicates deeper issues.");
-         // Decide if we should block or allow. Blocking is safer for now.
-          return res.status(500).send('Webhook processing failed: Server configuration error initializing PayPal client.');
+         console.warn("PayPal Client instance is null (config error during init), but proceeding with manual verification.");
     }
     
     const transmissionId = req.headers['paypal-transmission-id'];
@@ -92,9 +89,9 @@ const verifyPayPalWebhook = async (req, res, next) => {
     const webhookId = process.env.PAYPAL_WEBHOOK_ID;
     const rawBody = req.body; // Raw Buffer from express.raw()
 
-    if (!transmissionId || !transmissionSig || !transmissionTime || !certUrl || !authAlgo || !webhookId || !rawBody) {
-        console.error('Webhook verification failed: Missing required headers, webhook ID, or body.');
-        return res.status(400).send('Webhook verification failed: Missing parameters.');
+    if (!transmissionId || !transmissionSig || !transmissionTime || !certUrl || !authAlgo || !webhookId || !rawBody || Buffer.byteLength(rawBody) === 0) {
+        console.error('Webhook verification failed: Missing required headers, webhook ID, or body is empty.');
+        return res.status(400).send('Webhook verification failed: Missing parameters or empty body.');
     }
 
     try {
@@ -123,7 +120,7 @@ const verifyPayPalWebhook = async (req, res, next) => {
         }
 
         // --- Step 4: Construct Signature String --- 
-        const crc32Checksum = crc32(rawBody).toString(16);
+        const crc32Checksum = crc32(rawBody).toString(16); // Use lowercase hex as per some examples
         const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32Checksum}`;
         console.log("Constructed signature base string (length " + expectedSignatureBase.length + ")");
 
@@ -132,8 +129,12 @@ const verifyPayPalWebhook = async (req, res, next) => {
         let isVerified = false;
         try {
             let nodeAlgorithm = authAlgo;
+            // Map PayPal algo names to Node crypto names
             if (authAlgo.toUpperCase() === 'SHA256WITHRSA') {
                 nodeAlgorithm = 'RSA-SHA256';
+            } else {
+                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification might fail.`);
+                 // If other algorithms are possible, add mappings here
             }
             
             isVerified = crypto.verify(
@@ -164,10 +165,8 @@ const verifyPayPalWebhook = async (req, res, next) => {
             return res.status(403).send('Webhook verification failed: Invalid signature.');
         }
     } catch (error) {
-        // Catch errors during the manual verification steps
         console.error('Error during manual webhook verification process:', error);
-        // Add more specific error checking if needed (e.g., distinguish cert fetch vs crypto error)
-        if (error?.response?.status === 404 && error.config?.url === certUrl) {
+         if (error?.response?.status === 404 && error.config?.url === certUrl) {
             return res.status(500).send('Webhook verification failed: Could not fetch certificate.');
         }
         return res.status(500).send('Webhook verification failed due to server error.');
