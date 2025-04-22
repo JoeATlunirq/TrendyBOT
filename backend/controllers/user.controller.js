@@ -60,24 +60,27 @@ const defaultTemplates = {
 let storage;
 let gcsBucket;
 
-// Read credentials JSON content from environment variable
-const gcsCredentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
+// Read Base64 encoded credentials from environment variable
+const gcsCredentialsBase64 = process.env.GCS_CREDENTIALS_BASE64;
 const gcsBucketName = process.env.GCS_BUCKET_NAME;
 
-if (gcsCredentialsJson && gcsBucketName) {
+if (gcsCredentialsBase64 && gcsBucketName) {
     try {
-        const credentials = JSON.parse(gcsCredentialsJson);
+        // Decode the Base64 string to get the JSON content
+        const credentialsJson = Buffer.from(gcsCredentialsBase64, 'base64').toString('utf8');
+        const credentials = JSON.parse(credentialsJson);
+        
         storage = new Storage({ credentials }); // Pass credentials object directly
         gcsBucket = storage.bucket(gcsBucketName);
-        console.log(`Google Cloud Storage client initialized for bucket: ${gcsBucketName} using credentials from ENV.`);
+        console.log(`Google Cloud Storage client initialized for bucket: ${gcsBucketName} using Base64 credentials from ENV.`);
     } catch (error) {
-        console.error("FATAL ERROR: Failed to parse GOOGLE_CREDENTIALS_JSON or initialize Google Cloud Storage client.", error);
+        console.error("FATAL ERROR: Failed to decode/parse GCS_CREDENTIALS_BASE64 or initialize Google Cloud Storage client.", error);
         storage = null;
         gcsBucket = null;
     }
 } else {
-    if (!gcsCredentialsJson) {
-        console.warn("WARN: GOOGLE_CREDENTIALS_JSON environment variable not set. GCS cannot authenticate.");
+    if (!gcsCredentialsBase64) {
+        console.warn("WARN: GCS_CREDENTIALS_BASE64 environment variable not set. GCS cannot authenticate.");
     }
     if (!gcsBucketName) {
         console.warn("WARN: GCS_BUCKET_NAME environment variable not set. Target bucket unknown.");
@@ -86,6 +89,9 @@ if (gcsCredentialsJson && gcsBucketName) {
     storage = null;
     gcsBucket = null;
 }
+
+// Log status immediately after initialization block
+// console.log(`[user.controller module load] gcsBucket initialized: ${!!gcsBucket}`);
 
 /**
  * @desc    Update user onboarding preferences and mark onboarding complete
