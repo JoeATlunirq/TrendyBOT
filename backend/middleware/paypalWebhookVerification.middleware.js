@@ -25,14 +25,16 @@ if (paypal && paypal.Webhooks) { // Or maybe paypal.webhooks?
 function initializePayPalClient() {
     const clientId = process.env.PAYPAL_CLIENT_ID;
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-    const mode = process.env.PAYPAL_MODE || 'sandbox'; // Default to sandbox
+    const mode = process.env.PAYPAL_MODE || 'sandbox';
+
+    // Log the values being read from environment
+    console.log(`Initializing PayPal Client: Mode='${mode}', ClientID exists? ${!!clientId}, ClientSecret exists? ${!!clientSecret}`);
 
     if (!clientId || !clientSecret) {
-        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing.');
+        console.error('FATAL ERROR: PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is missing or empty in environment variables.');
         return null;
     }
 
-    // Verify necessary SDK components exist based on documentation
     if (!paypal || !paypal.Client || !paypal.Environment || !paypal.Environment.Sandbox || !paypal.Environment.Live) {
         console.error("PayPal SDK Client or Environment classes not found! Check SDK installation/version.");
         return null;
@@ -41,23 +43,25 @@ function initializePayPalClient() {
     const environment = mode === 'live' 
         ? paypal.Environment.Live 
         : paypal.Environment.Sandbox;
+    
+    // Log before attempting instantiation
+    console.log("Attempting to instantiate paypal.Client with environment:", environment);
+    console.log("Credentials Used: ClientID=", clientId ? 'PROVIDED' : 'MISSING', " Secret=", clientSecret ? 'PROVIDED' : 'MISSING');
 
     try {
-        const client = new paypal.Client({
+        const clientConfig = {
             clientCredentialsAuthCredentials: {
                 oAuthClientId: clientId,
                 oAuthClientSecret: clientSecret
             },
             environment: environment,
-            // Optional: Add logging, timeout, etc. as needed from docs
-            // logging: {
-            //     logLevel: paypal.LogLevel.Info, // Assuming LogLevel exists
-            // }
-        });
-        console.log(`PayPal client initialized for ${mode.toUpperCase()} mode.`);
+        };
+        console.log("Using Client Config:", JSON.stringify(clientConfig, null, 2)); // Log the config object
+        const client = new paypal.Client(clientConfig);
+        console.log(`PayPal client initialized successfully for ${mode.toUpperCase()} mode.`);
         return client;
     } catch (error) {
-        console.error("Error initializing PayPal Client:", error);
+        console.error("Error initializing PayPal Client:", error); // Ensure the actual error is logged
         return null;
     }
 }
