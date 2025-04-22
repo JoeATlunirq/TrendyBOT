@@ -148,28 +148,31 @@ const verifyPayPalWebhook = async (req, res, next) => {
         console.log(`Decoded Signature Buffer length: ${signatureBuffer.length}`);
         let isVerified = false;
         try {
-            let nodeAlgorithm = authAlgo;
-            if (authAlgo.toUpperCase() === 'SHA256WITHRSA') {
-                nodeAlgorithm = 'RSA-SHA256';
-            } 
-            else { 
-                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification will likely fail.`);
+            // Determine the hash algorithm (without RSA part for Node crypto)
+            let nodeHashAlgorithm = 'sha256'; // Default based on common PayPal practice
+            if (authAlgo?.toUpperCase() === 'SHA256WITHRSA') {
+                nodeHashAlgorithm = 'sha256'; 
+            } else {
+                // If PayPal could use other algorithms, map them here
+                // e.g., if (authAlgo?.toUpperCase() === 'SHA512WITHRSA') nodeHashAlgorithm = 'sha512';
+                 console.warn(`Unsupported or unexpected PayPal auth algorithm: ${authAlgo}. Assuming SHA256.`);
             }
-            console.log(`Using Node.js crypto algorithm: ${nodeAlgorithm}`);
+            console.log(`Using Node.js crypto hash algorithm: ${nodeHashAlgorithm} (RSA inferred from key)`);
+            
             if (!publicKey || typeof publicKey !== 'object') { 
                  console.error("Public key is invalid or missing before crypto.verify");
                  return res.status(500).send('Webhook verification failed: Invalid public key.');
             }
 
             isVerified = crypto.verify(
-                nodeAlgorithm, 
+                nodeHashAlgorithm, // Use only the hash algorithm name
                 expectedSignatureBaseBuffer, 
-                publicKey, 
+                publicKey, // Node.js infers RSA/ECDSA etc. from the key
                 signatureBuffer 
             );
         } catch (verifyError) {
              console.error('Error during crypto.verify:', verifyError); 
-             console.error(`Crypto verify failed with algorithm: ${nodeAlgorithm}, Error Code: ${verifyError.code}`);
+             console.error(`Crypto verify failed with algorithm: ${nodeHashAlgorithm}, Error Code: ${verifyError.code}`);
              return res.status(500).send('Webhook verification failed: Crypto error.');
         }
         
