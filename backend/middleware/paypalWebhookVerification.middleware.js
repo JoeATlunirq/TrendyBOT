@@ -34,27 +34,28 @@ function initializePayPalClient() {
     }
 
     // Check required SDK components based on .NET example structure
-    if (!paypal || !paypal.Client || !paypal.Environment || !paypal.Environment.Sandbox || !paypal.Environment.Live) {
+    if (!paypal || !paypal.Client || !paypal.Environment) {
         console.error("PayPal SDK Client or Environment classes not found! Check SDK installation/version and structure.");
         console.log("Available keys on paypal object:", Object.keys(paypal || {}));
         return null;
     }
 
+    // Check for specific Environment properties used
+    if (!paypal.Environment.Sandbox || !paypal.Environment.Live) {
+        console.error("PayPal SDK Environment.Sandbox or Environment.Live not found!");
+        console.log("Available keys on paypal.Environment:", paypal.Environment ? Object.keys(paypal.Environment) : 'paypal.Environment is missing');
+        return null;
+    }
+
     const environment = mode === 'live'
-        ? paypal.Environment.Live // Assuming direct access based on .NET example
-        : paypal.Environment.Sandbox;
+        ? new paypal.Environment.Live(clientId, clientSecret)
+        : new paypal.Environment.Sandbox(clientId, clientSecret);
 
     console.log("Attempting to instantiate paypal.Client with environment:", environment);
 
     try {
-        // Use constructor matching .NET example's builder pattern intent
-        const client = new paypal.Client({
-            clientCredentialsAuthCredentials: {
-                oAuthClientId: clientId,
-                oAuthClientSecret: clientSecret
-            },
-            environment: environment,
-        });
+        // Use constructor based on typical JS SDK usage
+        const client = new paypal.Client(environment);
         console.log(`PayPal client initialized successfully for ${mode.toUpperCase()} mode.`);
         return client;
     } catch (error) {

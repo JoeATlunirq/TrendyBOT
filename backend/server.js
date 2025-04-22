@@ -156,4 +156,11 @@ server.listen(PORT, () => { // Use the HTTP server to listen
 });
 
 // Export wss and potentially helper functions for other modules
-module.exports = { app, wss, sendToUser }; // Export sendToUser
+// module.exports = { app, wss, sendToUser }; // Original named export
+
+// Vercel expects the Express app instance as the default export
+module.exports = app; 
+
+// Keep named exports if needed elsewhere (though less common for Vercel entry)
+module.exports.wss = wss;
+module.exports.sendToUser = sendToUser;
