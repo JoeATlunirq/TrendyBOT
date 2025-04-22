@@ -120,28 +120,38 @@ const verifyPayPalWebhook = async (req, res, next) => {
         }
 
         // --- Step 4: Construct Signature String --- 
-        const crc32Checksum = crc32(rawBody).toString(16); // Use lowercase hex as per some examples
-        const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32Checksum}`;
-        console.log("Constructed signature base string (length " + expectedSignatureBase.length + ")");
+        // Ensure rawBody is definitely a Buffer
+        if (!Buffer.isBuffer(rawBody)) {
+            console.error("rawBody is not a Buffer before CRC calculation!");
+            return res.status(500).send('Webhook verification failed: Invalid body type.');
+        }
+        
+        // Calculate CRC32 checksum
+        const crc32Value = crc32(rawBody); // Calculate as a number
+        const crc32ChecksumString = crc32Value.toString(16); // Convert to hex string
+        console.log(`Calculated CRC32 Value (Number): ${crc32Value}`);
+        console.log(`Calculated CRC32 Checksum (Hex String): ${crc32ChecksumString}`);
+        
+        const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32ChecksumString}`;
+        const expectedSignatureBaseBuffer = Buffer.from(expectedSignatureBase, 'utf-8'); // Use explicit encoding
+        console.log("Constructed signature base string: " + expectedSignatureBase);
+        console.log("Constructed signature base Buffer length: " + expectedSignatureBaseBuffer.length);
 
         // --- Step 5: Verify Signature --- 
         const signatureBuffer = Buffer.from(transmissionSig, 'base64');
+        console.log(`Received Transmission Signature (Base64): ${transmissionSig}`);
+        console.log(`Decoded Signature Buffer length: ${signatureBuffer.length}`);
         let isVerified = false;
         try {
-            let nodeAlgorithm = authAlgo; // Algorithm from header
-            console.log(`Received PayPal Auth Algorithm: ${authAlgo}`); // Log original algo
-            
-            // Map PayPal algo names to Node crypto names
+            let nodeAlgorithm = authAlgo;
             if (authAlgo.toUpperCase() === 'SHA256WITHRSA') {
                 nodeAlgorithm = 'RSA-SHA256';
-            } else {
-                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification will likely fail.`);
-                 // If other algorithms are possible, add mappings here (e.g., ECDSA?)
             }
-            
-            console.log(`Using Node.js crypto algorithm: ${nodeAlgorithm}`); // Log mapped algo
-
-            // Ensure publicKey is usable (basic check)
+             // Add mapping for other algorithms if needed
+            else { 
+                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification will likely fail.`);
+            }
+            console.log(`Using Node.js crypto algorithm: ${nodeAlgorithm}`);
             if (!publicKey || typeof publicKey !== 'object') { 
                  console.error("Public key is invalid or missing before crypto.verify");
                  return res.status(500).send('Webhook verification failed: Invalid public key.');
@@ -149,13 +159,12 @@ const verifyPayPalWebhook = async (req, res, next) => {
 
             isVerified = crypto.verify(
                 nodeAlgorithm, 
-                Buffer.from(expectedSignatureBase),
+                expectedSignatureBaseBuffer, // Use the explicitly encoded buffer
                 publicKey, 
                 signatureBuffer 
             );
         } catch (verifyError) {
              console.error('Error during crypto.verify:', verifyError); 
-             // Log more details if possible
              console.error(`Crypto verify failed with algorithm: ${nodeAlgorithm}, Error Code: ${verifyError.code}`);
              return res.status(500).send('Webhook verification failed: Crypto error.');
         }
