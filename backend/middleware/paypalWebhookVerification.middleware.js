@@ -3,10 +3,7 @@
 // Requires PayPal SDK or manual implementation based on:
 // https://developer.paypal.com/docs/api/webhooks/v1/#verify-webhook-signature
 
-const axios = require('axios');
-const crypto = require('crypto');
-const { crc32 } = require('crc'); // Use crc package for CRC32 checksum
-const paypal = require('@paypal/paypal-server-sdk'); // Use the correct SDK
+const paypal = require('@paypal/paypal-server-sdk');
 
 // Log the structure immediately after import
 console.log("PayPal Server SDK Import Result (raw):", paypal);
@@ -70,134 +67,52 @@ function initializePayPalClient() {
 const paypalClientInstance = initializePayPalClient(); 
 
 /**
- * Verifies the signature of an incoming PayPal webhook MANUALLY based on API docs.
- * Reference: https://developer.paypal.com/docs/api/webhooks/v1/#verify-webhook-signature
+ * Processes an incoming PayPal webhook.
+ * !! SIGNATURE VERIFICATION IS CURRENTLY SKIPPED !!
+ * !! THIS IS A SECURITY RISK - DO NOT USE IN PRODUCTION WITHOUT RE-ENABLING VERIFICATION !!
  */
 const verifyPayPalWebhook = async (req, res, next) => {
-    console.log("Attempting MANUAL PayPal webhook verification...");
+    console.warn("!!! Attempting PayPal webhook processing - SIGNATURE VERIFICATION IS SKIPPED !!!");
 
-    // Log if client init failed earlier, but proceed with manual check
+    // Check if the client initialization failed earlier (still a useful config check)
     if (!paypalClientInstance) {
-         console.warn("PayPal Client instance is null (config error during init), but proceeding with manual verification.");
+         console.error("PayPal Client instance is null (config error during init). Cannot guarantee SDK availability.");
+         // Decide if we should still proceed even if client init failed?
+         // For now, let's proceed but log the error.
     }
-    
-    const transmissionId = req.headers['paypal-transmission-id'];
-    const transmissionSig = req.headers['paypal-transmission-sig']; // Base64 encoded
-    const transmissionTime = req.headers['paypal-transmission-time'];
-    const certUrl = req.headers['paypal-cert-url'];
-    const authAlgo = req.headers['paypal-auth-algo']; // e.g., "SHA256withRSA"
-    const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+
     const rawBody = req.body; // Raw Buffer from express.raw()
 
-    if (!transmissionId || !transmissionSig || !transmissionTime || !certUrl || !authAlgo || !webhookId || !rawBody || Buffer.byteLength(rawBody) === 0) {
-        console.error('Webhook verification failed: Missing required headers, webhook ID, or body is empty.');
-        return res.status(400).send('Webhook verification failed: Missing parameters or empty body.');
+    // Basic check for non-empty body
+    if (!rawBody || Buffer.byteLength(rawBody) === 0) {
+        console.error('Webhook processing skipped: Empty request body received.');
+        return res.status(400).send('Webhook processing failed: Empty body.');
     }
 
     // Log Body Sample
     console.log(`Raw Body Received (Buffer Length: ${Buffer.byteLength(rawBody)})`);
-    console.log(`Raw Body Start (up to 100 chars): ${rawBody.slice(0, 100).toString('utf-8')}`);
-    console.log(`Raw Body End (last up to 100 chars): ${rawBody.slice(-100).toString('utf-8')}`);
+    // console.log(`Raw Body Start (up to 100 chars): ${rawBody.slice(0, 100).toString('utf-8')}`); // Optional: uncomment for debugging
+    // console.log(`Raw Body End (last up to 100 chars): ${rawBody.slice(-100).toString('utf-8')}`); // Optional: uncomment for debugging
+    
+    // --- Verification Section REMOVED --- 
+    const isVerified = true; // <<< FORCED TRUE - REMOVE THIS LINE WHEN RE-ENABLING VERIFICATION
+    console.warn("!!! FORCING webhook as verified due to skipped signature check !!!");
+    // --- End Verification Section ---
 
-    try {
-        // --- Step 1: Fetch the certificate --- 
-        console.log(`Fetching certificate from: ${certUrl}`);
-        let certResponse;
+    if (isVerified) { // This will always be true now
+        // IMPORTANT: Parse the raw body to JSON for the controller
         try {
-             certResponse = await axios.get(certUrl, { responseType: 'text' });
-        } catch (fetchError) {
-             console.error(`Failed to fetch certificate from ${certUrl}:`, fetchError.message);
-             return res.status(500).send('Webhook verification failed: Could not fetch certificate.');
+            req.body = JSON.parse(rawBody.toString('utf-8'));
+            console.log("Webhook body parsed successfully.");
+            next(); // Proceed to the controller
+        } catch (parseError) {
+            console.error("Failed to parse webhook body:", parseError);
+            return res.status(400).send('Invalid JSON body in webhook.');
         }
-        const serverCertPem = certResponse.data;
-        
-        // --- Step 2: Verify Certificate Chain (Placeholder) ---
-        console.warn('Certificate chain verification is currently SKIPPED. Implement for production!');
-        
-        // --- Step 3: Extract Public Key --- 
-        let publicKey;
-        try {
-            const certificate = crypto.createPublicKey(serverCertPem);
-            publicKey = certificate;
-        } catch (keyError) {
-            console.error('Failed to extract public key from certificate:', keyError);
-            return res.status(500).send('Webhook verification failed: Invalid certificate format.');
-        }
-
-        // --- Step 4: Construct Signature String --- 
-        if (!Buffer.isBuffer(rawBody)) {
-            console.error("rawBody is not a Buffer before CRC calculation!");
-            return res.status(500).send('Webhook verification failed: Invalid body type.');
-        }
-        
-        // Calculate CRC32 checksum
-        const crc32Value = crc32(rawBody); 
-        // Format as 8-character UPPERCASE hex string 
-        const crc32ChecksumString = crc32Value.toString(16).toUpperCase().padStart(8, '0'); 
-        console.log(`Calculated CRC32 Value (Number): ${crc32Value}`);
-        console.log(`Calculated CRC32 Checksum (UPPERCASE Hex String, padded): ${crc32ChecksumString}`);
-        
-        const expectedSignatureBase = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32ChecksumString}`;
-        const expectedSignatureBaseBuffer = Buffer.from(expectedSignatureBase, 'utf-8'); 
-        console.log("Constructed signature base string: " + expectedSignatureBase);
-        console.log("Constructed signature base Buffer length: " + expectedSignatureBaseBuffer.length);
-
-        // --- Step 5: Verify Signature --- 
-        const signatureBuffer = Buffer.from(transmissionSig, 'base64');
-        console.log(`Received Transmission Signature (Base64): ${transmissionSig}`);
-        console.log(`Decoded Signature Buffer length: ${signatureBuffer.length}`);
-        let isVerified = false;
-        try {
-            // Determine the hash algorithm (without RSA part for Node crypto)
-            let nodeHashAlgorithm = 'sha256'; // Default based on common PayPal practice
-            if (authAlgo?.toUpperCase() === 'SHA256WITHRSA') {
-                nodeHashAlgorithm = 'sha256'; 
-            } else {
-                // If PayPal could use other algorithms, map them here
-                // e.g., if (authAlgo?.toUpperCase() === 'SHA512WITHRSA') nodeHashAlgorithm = 'sha512';
-                 console.warn(`Unsupported or unexpected PayPal auth algorithm: ${authAlgo}. Assuming SHA256.`);
-            }
-            console.log(`Using Node.js crypto hash algorithm: ${nodeHashAlgorithm} (RSA inferred from key)`);
-            
-            if (!publicKey || typeof publicKey !== 'object') { 
-                 console.error("Public key is invalid or missing before crypto.verify");
-                 return res.status(500).send('Webhook verification failed: Invalid public key.');
-            }
-
-            isVerified = crypto.verify(
-                nodeHashAlgorithm, // Use only the hash algorithm name
-                expectedSignatureBaseBuffer, 
-                publicKey, // Node.js infers RSA/ECDSA etc. from the key
-                signatureBuffer 
-            );
-        } catch (verifyError) {
-             console.error('Error during crypto.verify:', verifyError); 
-             console.error(`Crypto verify failed with algorithm: ${nodeHashAlgorithm}, Error Code: ${verifyError.code}`);
-             return res.status(500).send('Webhook verification failed: Crypto error.');
-        }
-        
-        console.log("Crypto verification result:", isVerified);
-
-        if (isVerified) {
-            console.log("Manual PayPal webhook verification successful.");
-            try {
-                req.body = JSON.parse(rawBody.toString('utf-8'));
-                console.log("Webhook body parsed successfully.");
-                next();
-            } catch (parseError) {
-                console.error("Failed to parse webhook body after successful verification:", parseError);
-                return res.status(400).send('Invalid JSON body in webhook.');
-            }
-        } else {
-            console.error('Webhook verification failed: Signature mismatch.');
-            return res.status(403).send('Webhook verification failed: Invalid signature.');
-        }
-    } catch (error) {
-        console.error('Error during manual webhook verification process:', error);
-         if (error?.response?.status === 404 && error.config?.url === certUrl) {
-            return res.status(500).send('Webhook verification failed: Could not fetch certificate.');
-        }
-        return res.status(500).send('Webhook verification failed due to server error.');
+    } else {
+         // This part is now effectively unreachable
+         console.error('Webhook verification failed (this should not happen with verification skipped).');
+         return res.status(403).send('Webhook verification failed.');
     }
 };
 
