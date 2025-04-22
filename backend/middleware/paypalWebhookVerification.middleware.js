@@ -128,15 +128,25 @@ const verifyPayPalWebhook = async (req, res, next) => {
         const signatureBuffer = Buffer.from(transmissionSig, 'base64');
         let isVerified = false;
         try {
-            let nodeAlgorithm = authAlgo;
+            let nodeAlgorithm = authAlgo; // Algorithm from header
+            console.log(`Received PayPal Auth Algorithm: ${authAlgo}`); // Log original algo
+            
             // Map PayPal algo names to Node crypto names
             if (authAlgo.toUpperCase() === 'SHA256WITHRSA') {
                 nodeAlgorithm = 'RSA-SHA256';
             } else {
-                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification might fail.`);
-                 // If other algorithms are possible, add mappings here
+                 console.warn(`Unsupported PayPal auth algorithm received: ${authAlgo}. Verification will likely fail.`);
+                 // If other algorithms are possible, add mappings here (e.g., ECDSA?)
             }
             
+            console.log(`Using Node.js crypto algorithm: ${nodeAlgorithm}`); // Log mapped algo
+
+            // Ensure publicKey is usable (basic check)
+            if (!publicKey || typeof publicKey !== 'object') { 
+                 console.error("Public key is invalid or missing before crypto.verify");
+                 return res.status(500).send('Webhook verification failed: Invalid public key.');
+            }
+
             isVerified = crypto.verify(
                 nodeAlgorithm, 
                 Buffer.from(expectedSignatureBase),
@@ -144,7 +154,9 @@ const verifyPayPalWebhook = async (req, res, next) => {
                 signatureBuffer 
             );
         } catch (verifyError) {
-             console.error('Error during crypto.verify:', verifyError);
+             console.error('Error during crypto.verify:', verifyError); 
+             // Log more details if possible
+             console.error(`Crypto verify failed with algorithm: ${nodeAlgorithm}, Error Code: ${verifyError.code}`);
              return res.status(500).send('Webhook verification failed: Crypto error.');
         }
         
