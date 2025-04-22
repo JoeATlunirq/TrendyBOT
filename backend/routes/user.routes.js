@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer'); // Import multer
 const path = require('path'); // Import path for filename generation
-const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, sendTelegramVerificationCode, verifyTelegramCode, disconnectTelegram, updateProfilePhoto, changePassword, setup2FA, verify2FA, disable2FA, deleteAccount } = require('../controllers/user.controller');
+const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, sendTelegramVerificationCode, verifyTelegramCode, disconnectTelegram, updateProfilePhoto, changePassword, setup2FA, verify2FA, disable2FA, deleteAccount, getAvatarSignedUrl } = require('../controllers/user.controller');
 const { protect } = require('../middleware/auth.middleware'); // Import the protect middleware
 
 const router = express.Router();
@@ -133,5 +133,12 @@ router.put('/alert-templates', protect, updateAlertTemplates);
 // @access  Private
 router.delete('/account', protect, deleteAccount);
 // ---------------------------
+
+// --- Get Signed URL for Avatar ---
+// @route   GET /api/users/avatar-url
+// @desc    Get a short-lived signed URL for the user's avatar
+// @access  Private
+router.get('/avatar-url', protect, getAvatarSignedUrl);
+// ----------------------------------
 
 module.exports = router; 

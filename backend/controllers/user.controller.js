@@ -1287,6 +1287,61 @@ const deleteAccount = async (req, res, next) => {
     }
 };
 
+/**
+ * @desc    Get a temporary signed URL for the user's profile photo
+ * @route   GET /api/users/avatar-url
+ * @access  Private
+ */
+const getAvatarSignedUrl = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Check if GCS client is ready
+    if (!gcsBucket) {
+        console.error(`[getAvatarSignedUrl] GCS Bucket not configured for user ${userId}.`);
+        // Return a generic error or potentially a fallback URL
+        return res.status(503).json({ message: 'Storage service unavailable.', signedUrl: null });
+    }
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) {
+             return res.status(404).json({ message: 'User not found', signedUrl: null });
+        }
+
+        const objectPath = userRecord[NOCODB_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url'];
+
+        if (!objectPath || typeof objectPath !== 'string' || objectPath.trim() === '') {
+            // No avatar path stored for the user
+            console.log(`[getAvatarSignedUrl] No avatar path found for user ${userId}.`);
+            return res.status(200).json({ signedUrl: null }); // Indicate no specific avatar
+        }
+
+        console.log(`[getAvatarSignedUrl] Generating signed URL for user ${userId}, path: ${objectPath}`);
+
+        // Generate the signed URL
+        const options = {
+            version: 'v4', // Recommended version
+            action: 'read', // We only need to read the image
+            expires: Date.now() + 15 * 60 * 1000, // 15 minutes expiry
+        };
+
+        const [signedUrl] = await gcsBucket.file(objectPath).getSignedUrl(options);
+
+        console.log(`[getAvatarSignedUrl] Generated URL for user ${userId}: ${signedUrl.substring(0, 100)}...`); // Log start of URL
+
+        res.status(200).json({ signedUrl: signedUrl });
+
+    } catch (error) {
+        console.error(`[getAvatarSignedUrl] Error generating signed URL for user ${userId}, path: ${objectPath}:`, error);
+        // Don't expose detailed errors, return a generic failure or null
+        res.status(500).json({ message: 'Could not retrieve avatar URL.', signedUrl: null });
+        // Note: `next(error)` could also be used if you want the central handler
+    }
+};
+
 module.exports = {
   updateUserPreferences,
   updateProfile,
@@ -1305,5 +1360,6 @@ module.exports = {
   setup2FA,
   verify2FA,
   disable2FA,
-  deleteAccount
+  deleteAccount,
+  getAvatarSignedUrl
 }; 
