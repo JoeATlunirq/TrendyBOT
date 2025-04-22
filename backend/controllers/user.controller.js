@@ -7,6 +7,8 @@ const COLS = require('../config/nocodb_columns');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const { authenticator } = require('otplib');
+const { Storage } = require('@google-cloud/storage');
+const path = require('path');
 
 // Destructure column names from environment variables
 const { 
@@ -53,6 +55,37 @@ const defaultTemplates = {
     templateEmailSubject: "🔥 New Trending Shorts Alert from Trendy",
     templateEmailPreview: "A new video is trending: {video_title}"
 };
+
+// --- Instantiate GCS Client --- 
+let storage;
+let gcsBucket;
+
+// Read credentials JSON content from environment variable
+const gcsCredentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
+const gcsBucketName = process.env.GCS_BUCKET_NAME;
+
+if (gcsCredentialsJson && gcsBucketName) {
+    try {
+        const credentials = JSON.parse(gcsCredentialsJson);
+        storage = new Storage({ credentials }); // Pass credentials object directly
+        gcsBucket = storage.bucket(gcsBucketName);
+        console.log(`Google Cloud Storage client initialized for bucket: ${gcsBucketName} using credentials from ENV.`);
+    } catch (error) {
+        console.error("FATAL ERROR: Failed to parse GOOGLE_CREDENTIALS_JSON or initialize Google Cloud Storage client.", error);
+        storage = null;
+        gcsBucket = null;
+    }
+} else {
+    if (!gcsCredentialsJson) {
+        console.warn("WARN: GOOGLE_CREDENTIALS_JSON environment variable not set. GCS cannot authenticate.");
+    }
+    if (!gcsBucketName) {
+        console.warn("WARN: GCS_BUCKET_NAME environment variable not set. Target bucket unknown.");
+    }
+    console.warn("WARN: GCS client not initialized due to missing environment variables.");
+    storage = null;
+    gcsBucket = null;
+}
 
 /**
  * @desc    Update user onboarding preferences and mark onboarding complete
@@ -906,43 +939,95 @@ const disconnectTelegram = async (req, res, next) => {
 };
 
 /**
- * @desc    Update user profile photo
+ * @desc    Update user profile photo using Google Cloud Storage
  * @route   PUT /api/users/profile/photo
  * @access  Private
  */
 const updateProfilePhoto = async (req, res, next) => {
-    // Correctly read userId attached directly by the protect middleware
-    const userId = req.userId; 
+    const userId = req.userId;
     if (!userId) {
-        // Keep this check, although protect middleware should prevent this
         return res.status(401).json({ message: 'Not authorized, user ID missing' });
     }
 
-    if (!req.file) {
-        // This might happen if the file filter rejected the file
-        return res.status(400).json({ message: 'File upload failed. Please ensure you are uploading a valid image (JPG, PNG, GIF) under 2MB.' });
+    // Check if GCS is configured
+    if (!gcsBucket) {
+        console.error(`[updateProfilePhoto] GCS Bucket not configured for user ${userId}. Check GCS_BUCKET_NAME and credentials.`);
+        return next(new Error('Server configuration error: Cloud Storage is not set up.'));
     }
 
+    // Check if file was uploaded (req.file comes from multer memoryStorage)
+    if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded or file type rejected.' });
+    }
+    if (!req.file.buffer) {
+         return res.status(400).json({ message: 'File buffer is missing.' });
+    }
+    // Add detailed check for originalname early
+    if (!req.file.originalname) {
+        console.error(`[updateProfilePhoto] req.file.originalname is missing for user ${userId}. File details:`, req.file);
+        return res.status(400).json({ message: 'File metadata (originalname) is missing.' });
+    }
+
+
     try {
-        // Construct the public URL path based on static serving setup
-        const publicUrlPath = `/uploads/avatars/${req.file.filename}`;
+        // --- DETAILED LOGGING ---
+        // console.log(`[updateProfilePhoto Debug] Start processing for user: ${userId}`);
+        // console.log(`[updateProfilePhoto Debug] req.file.originalname: ${req.file.originalname}`);
+        const fileExtension = path.extname(req.file.originalname);
+        // console.log(`[updateProfilePhoto Debug] fileExtension: ${fileExtension}`);
+        const timestamp = Date.now();
+        // console.log(`[updateProfilePhoto Debug] timestamp: ${timestamp}`);
+        // console.log(`[updateProfilePhoto Debug] Constructing gcsFileName with: user-${userId}-${timestamp}${fileExtension}`);
+        // --- END DETAILED LOGGING ---
+
+        // Create a unique filename for GCS
+        const gcsFileName = `avatars/user-${userId}-${timestamp}${fileExtension}`;
+        const file = gcsBucket.file(gcsFileName);
+
+        console.log(`[updateProfilePhoto] Uploading ${gcsFileName} to bucket ${process.env.GCS_BUCKET_NAME}...`);
+        // Upload the file buffer to GCS
+        await file.save(req.file.buffer, {
+            metadata: {
+                contentType: req.file.mimetype,
+                // Optional: Add cache control for browsers
+                // cacheControl: 'public, max-age=31536000',
+            },
+            // Make the file publicly readable
+            public: true,
+            // Optional: Predefined ACL for simplicity, alternatives exist
+            // predefinedAcl: 'publicRead',
+        });
+
+        // --- DETAILED LOGGING ---
+        // console.log(`[updateProfilePhoto Debug] GCS_BUCKET_NAME: ${process.env.GCS_BUCKET_NAME}`);
+        // console.log(`[updateProfilePhoto Debug] gcsFileName: ${gcsFileName}`);
+        // console.log(`[updateProfilePhoto Debug] Constructing publicUrl with: https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`);
+        // --- END DETAILED LOGGING ---
+
+        // Get the public URL
+        const publicUrl = `https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`;
+
+        // --- DETAILED LOGGING ---
+        // console.log(`[updateProfilePhoto Debug] Constructed publicUrl: ${publicUrl}`);
+        // --- END DETAILED LOGGING ---
+
+        console.log(`[updateProfilePhoto] File uploaded to GCS for user ${userId}: ${publicUrl}`);
 
         // Prepare data for NocoDB update
         const photoUrlColumn = NOCODB_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
         const dataToUpdate = {
-            [photoUrlColumn]: publicUrlPath
+            [photoUrlColumn]: publicUrl // Save the FULL GCS URL
         };
+        // console.log(`[updateProfilePhoto Debug] Data to update NocoDB:`, dataToUpdate);
 
         // Update the user record in NocoDB
         const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
-        console.log(`Updated profile photo URL for user ${userId} to: ${publicUrlPath}`);
+        console.log(`[updateProfilePhoto] Updated NocoDB profile photo URL for user ${userId}`);
 
         // Respond with the new photo URL
         res.status(200).json({
             message: 'Profile photo updated successfully',
-            photoUrl: publicUrlPath, // Send back the URL for the frontend to use
-            // Optionally send back the relevant part of the updated user object if needed
-            // user: { [photoUrlColumn]: updatedUser[photoUrlColumn] } 
+            photoUrl: publicUrl, // Send back the full GCS URL
         });
 
     } catch (error) {

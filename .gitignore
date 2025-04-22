@@ -72,6 +72,7 @@ snowpack/
 .env
 .env.*
 !.env.example
+gcs-credentials.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
