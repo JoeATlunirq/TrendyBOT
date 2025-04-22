@@ -14,7 +14,9 @@ const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker');
 
 const app = express();
 const server = http.createServer(app); // Create HTTP server from Express app
-const wss = new WebSocket.Server({ server }); // Create WebSocket server
+
+// Create WebSocket server WITHOUT attaching it directly to the HTTP server's upgrade handling initially
+const wss = new WebSocket.Server({ noServer: true }); 
 
 // --- WebSocket Server Logic ---
 // Store connected clients (simple approach, enhance later for user mapping)
@@ -23,7 +25,7 @@ const clients = new Map(); // Map WebSocket connection to metadata (e.g., userId
 wss.on('connection', (ws, req) => { // Added req to potentially get initial headers if needed
   // Note: Basic 'ws' doesn't easily pass request context like Socket.IO.
   // Authentication will happen via a message after connection.
-  console.log('Client connected via WebSocket');
+  console.log('WebSocket Client connected');
   const clientId = Date.now(); // Simple unique ID for now
   // Store the client temporarily until authenticated
   clients.set(ws, { id: clientId, userId: null }); 
@@ -86,6 +88,27 @@ wss.on('connection', (ws, req) => { // Added req to potentially get initial head
 
   // Request authentication from the client upon connection
   ws.send(JSON.stringify({ type: 'auth_request', message: 'Please send authentication token.' }));
+});
+
+// --- Explicit Upgrade Handling --- 
+server.on('upgrade', (request, socket, head) => {
+  // Log the requested path for debugging
+  console.log(`[HTTP Upgrade] Request received for path: ${request.url}`);
+
+  // You can add path checking here if you want dedicated paths, e.g.:
+  // if (request.url === '/websocket') { ... }
+  // For now, let's handle upgrades to the root path (or any path)
+
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    // Pass the connection to the WebSocket server's connection handler
+    wss.emit('connection', ws, request);
+    console.log(`[HTTP Upgrade] WebSocket upgrade successful for path: ${request.url}`);
+  });
+  // If you uncommented path checking above, add an else block to destroy sockets for other paths:
+  // } else {
+  //   console.log(`[HTTP Upgrade] Destroying socket for unhandled path: ${request.url}`);
+  //   socket.destroy();
+  // }
 });
 
 // Function to send message to a specific user ID (Requires user mapping)
