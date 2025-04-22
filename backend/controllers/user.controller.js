@@ -1,6 +1,12 @@
 const NocoDBService = require('../services/nocodb.service');
 const SubscriptionLogicService = require('../services/subscriptionLogic.service');
+const TelegramBot = require('node-telegram-bot-api');
+const crypto = require('crypto');
+const { sendToUser } = require('../server');
 const COLS = require('../config/nocodb_columns');
+const multer = require('multer');
+const bcrypt = require('bcrypt');
+const { authenticator } = require('otplib');
 
 // Destructure column names from environment variables
 const { 
@@ -21,12 +27,22 @@ const {
     NOCODB_THRESHOLD_COMMENTS_COLUMN,
     NOCODB_THRESHOLD_VELOCITY_COLUMN,
     NOCODB_FILTER_CHANNELS_COLUMN,
-    NOCODB_FILTER_NICHES_COLUMN,
-    NOCODB_FILTER_HASHTAGS_COLUMN,
     NOCODB_TEMPLATE_TELEGRAM_COLUMN,
     NOCODB_TEMPLATE_DISCORD_COLUMN,
     NOCODB_TEMPLATE_EMAIL_SUBJECT_COLUMN,
     NOCODB_TEMPLATE_EMAIL_PREVIEW_COLUMN,
+    NOCODB_TELEGRAM_VERIFIED_COLUMN,
+    NOCODB_TELEGRAM_CODE_COLUMN,
+    NOCODB_TELEGRAM_EXPIRY_COLUMN,
+    NOCODB_PASSWORD_COLUMN,
+    NOCODB_EMAIL_COLUMN,
+    NOCODB_2FA_SECRET_COLUMN,
+    NOCODB_2FA_ENABLED_COLUMN,
+    NOCODB_THRESHOLD_RELATIVE_VIEW_PERFORMANCE_PERCENT_COLUMN,
+    NOCODB_THRESHOLD_RELATIVE_VIEW_METRIC_COLUMN,
+    NOCODB_THRESHOLD_VIEWS_TIME_WINDOW_HOURS_COLUMN,
+    NOCODB_THRESHOLD_LIKES_TIME_WINDOW_HOURS_COLUMN,
+    NOCODB_THRESHOLD_COMMENTS_TIME_WINDOW_HOURS_COLUMN,
     // NOCODB_TRACKED_CHANNELS_COLUMN // Uncomment if needed
 } = process.env;
 
@@ -121,38 +137,51 @@ const updateProfile = async (req, res, next) => {
     return res.status(401).json({ message: 'Not authorized, user ID missing' });
   }
 
-  const { name, companyName } = req.body;
+  // Read values using the column name constants from the request body
+  const nameValue = req.body[NOCODB_NAME_COLUMN];
+  const companyValue = req.body[NOCODB_COMPANY_NAME_COLUMN];
 
-  // Prepare data object with correct column names
+  console.log(`[updateProfile] Received for user ${userId}:`, { [NOCODB_NAME_COLUMN]: nameValue, [NOCODB_COMPANY_NAME_COLUMN]: companyValue }); // Log received values
+
+  // Prepare data object using environment variables for NocoDB column names
+  const nameNocoDbColumn = NOCODB_NAME_COLUMN; 
+  const companyNocoDbColumn = NOCODB_COMPANY_NAME_COLUMN;
+
+  if (!nameNocoDbColumn || !companyNocoDbColumn) {
+      console.error("[updateProfile] Error: NOCODB_NAME_COLUMN or NOCODB_COMPANY_NAME_COLUMN environment variables not set!");
+      // It's crucial these are set correctly in .env
+      return next(new Error("Server configuration error: Missing profile column names.")); 
+  }
+
   const dataToUpdate = {};
-  if (name !== undefined) {
-      dataToUpdate[NOCODB_NAME_COLUMN || 'name'] = name;
+  if (nameValue !== undefined) {
+      dataToUpdate[nameNocoDbColumn] = nameValue;
   }
-  if (companyName !== undefined) {
-      dataToUpdate[NOCODB_COMPANY_NAME_COLUMN || 'company_name'] = companyName;
+  if (companyValue !== undefined) {
+      // Allow setting company name to empty string
+      dataToUpdate[companyNocoDbColumn] = companyValue;
   }
-  // Note: Photo URL update would typically happen via a separate file upload endpoint
+
+  console.log(`[updateProfile] Data to update in NocoDB:`, dataToUpdate); // Log data being sent for update
 
   try {
-    // Don't update if no relevant data was provided
     if (Object.keys(dataToUpdate).length === 0) {
-      // Optionally fetch current user data if needed, otherwise return success
-      // For now, just return a success message or 204 No Content
        return res.status(200).json({ message: 'No profile data provided to update.' });
     }
 
     const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
+    console.log(`[updateProfile] NocoDB update successful for user ${userId}.`); // Log success
 
     const passwordColumn = process.env.NOCODB_PASSWORD_COLUMN || 'password';
     const { [passwordColumn]: _, ...userWithoutPassword } = updatedUser;
 
     res.status(200).json({
       message: 'Profile updated successfully',
-      user: userWithoutPassword, // Send back updated user info
+      user: userWithoutPassword, // Send back updated user info (reflecting DB state)
     });
 
   } catch (error) {
-    console.error('Update Profile Error:', error);
+    console.error(`[updateProfile] NocoDB update failed for user ${userId}:`, error); // Log specific update error
     next(error); 
   }
 };
@@ -258,25 +287,49 @@ const getAlertPreferences = async (req, res, next) => {
     }
 
     try {
-        // Fetch the user record using the new service function
         const userRecord = await NocoDBService.getUserRecordById(userId);
 
         if (!userRecord) {
              return res.status(404).json({ message: 'User not found' });
         }
 
-        // Extract preferences using column names from .env, provide defaults
-        const preferences = {
-            [NOCODB_THRESHOLD_VIEWS_COLUMN || 'threshold_views']: userRecord[NOCODB_THRESHOLD_VIEWS_COLUMN || 'threshold_views'] ?? 10000, // Default 10k
-            [NOCODB_THRESHOLD_LIKES_COLUMN || 'threshold_likes']: userRecord[NOCODB_THRESHOLD_LIKES_COLUMN || 'threshold_likes'] ?? 1000, // Default 1k
-            [NOCODB_THRESHOLD_COMMENTS_COLUMN || 'threshold_comments']: userRecord[NOCODB_THRESHOLD_COMMENTS_COLUMN || 'threshold_comments'] ?? 100, // Default 100
-            [NOCODB_THRESHOLD_VELOCITY_COLUMN || 'threshold_velocity']: userRecord[NOCODB_THRESHOLD_VELOCITY_COLUMN || 'threshold_velocity'] ?? 500, // Default 500
-            [NOCODB_FILTER_CHANNELS_COLUMN || 'filter_channels']: userRecord[NOCODB_FILTER_CHANNELS_COLUMN || 'filter_channels'] ?? "",
-            [NOCODB_FILTER_NICHES_COLUMN || 'filter_niches']: userRecord[NOCODB_FILTER_NICHES_COLUMN || 'filter_niches'] ?? "",
-            [NOCODB_FILTER_HASHTAGS_COLUMN || 'filter_hashtags']: userRecord[NOCODB_FILTER_HASHTAGS_COLUMN || 'filter_hashtags'] ?? "",
+        // Helper to safely get number or null from record
+        const getNumberOrNullFromRecord = (record, key, defaultValue = null) => {
+            const val = record[key];
+            if (val === null || val === undefined) return defaultValue; // Return default if explicitly null/undefined
+            if (typeof val === 'number' && !isNaN(val)) return val;
+            if (typeof val === 'string') { // Try parsing if stored as string maybe?
+                 const parsed = parseInt(val, 10);
+                 if (!isNaN(parsed)) return parsed;
+            }
+            // If it exists but isn't a valid number or null, return default
+            console.warn(`[getAlertPreferences] Invalid number format for ${key} in userRecord ${userId}, using default ${defaultValue}`);
+            return defaultValue; 
+        };
+         // Helper to safely get number or default (for non-nullable)
+        const getNumberOrDefaultFromRecord = (record, key, defaultValue = 0) => {
+            const val = getNumberOrNullFromRecord(record, key, defaultValue); // Reuse null check
+            return val === null ? defaultValue : val; // Ensure non-null return
         };
 
-        res.status(200).json(preferences);
+        // Extract preferences using column names from .env, provide defaults
+        // Constructing response with CAMEL_CASE keys for frontend compatibility
+        const preferences = {
+            // Existing fields (camelCase keys)
+            thresholdViews: getNumberOrDefaultFromRecord(userRecord, NOCODB_THRESHOLD_VIEWS_COLUMN || 'threshold_views', 3000000), // Use same defaults as frontend store
+            thresholdLikes: getNumberOrDefaultFromRecord(userRecord, NOCODB_THRESHOLD_LIKES_COLUMN || 'threshold_likes', 50000),
+            thresholdComments: getNumberOrDefaultFromRecord(userRecord, NOCODB_THRESHOLD_COMMENTS_COLUMN || 'threshold_comments', 450),
+            thresholdVelocity: getNumberOrDefaultFromRecord(userRecord, NOCODB_THRESHOLD_VELOCITY_COLUMN || 'threshold_velocity', 500),
+            filterChannels: userRecord[NOCODB_FILTER_CHANNELS_COLUMN || 'filter_channels'] ?? "",
+            // --- NEW Fields (camelCase keys) ---
+            thresholdRelativeViewPerformancePercent: getNumberOrNullFromRecord(userRecord, NOCODB_THRESHOLD_RELATIVE_VIEW_PERFORMANCE_PERCENT_COLUMN || 'threshold_relative_view_performance_percent', null),
+            thresholdRelativeViewMetric: userRecord[NOCODB_THRESHOLD_RELATIVE_VIEW_METRIC_COLUMN || 'threshold_relative_view_metric'] ?? '30d_avg_views',
+            thresholdViewsTimeWindowHours: getNumberOrNullFromRecord(userRecord, NOCODB_THRESHOLD_VIEWS_TIME_WINDOW_HOURS_COLUMN || 'threshold_views_time_window_hours', null),
+            thresholdLikesTimeWindowHours: getNumberOrNullFromRecord(userRecord, NOCODB_THRESHOLD_LIKES_TIME_WINDOW_HOURS_COLUMN || 'threshold_likes_time_window_hours', null),
+            thresholdCommentsTimeWindowHours: getNumberOrNullFromRecord(userRecord, NOCODB_THRESHOLD_COMMENTS_TIME_WINDOW_HOURS_COLUMN || 'threshold_comments_time_window_hours', null),
+        };
+
+        res.status(200).json(preferences); // Send camelCase keys
 
     } catch (error) {
         console.error('Get Alert Preferences Error:', error);
@@ -295,45 +348,83 @@ const updateAlertPreferences = async (req, res, next) => {
         return res.status(401).json({ message: 'Not authorized, user ID missing' });
     }
 
-    // Extract expected fields from request body
+    // Extract expected fields from request body (add new fields, remove niches/hashtags)
     const {
         thresholdViews,
         thresholdLikes,
         thresholdComments,
         thresholdVelocity,
         filterChannels,
-        filterNiches,
-        filterHashtags
+        thresholdRelativeViewPerformancePercent,
+        thresholdRelativeViewMetric,
+        thresholdViewsTimeWindowHours,
+        thresholdLikesTimeWindowHours,
+        thresholdCommentsTimeWindowHours
     } = req.body;
 
-    // Prepare data object with correct column names
+    // Prepare data object with correct column names (add new, remove old)
     const dataToUpdate = {};
-    // Add validation/parsing (e.g., ensure numbers are numbers)
-    if (thresholdViews !== undefined) dataToUpdate[NOCODB_THRESHOLD_VIEWS_COLUMN || 'threshold_views'] = parseInt(thresholdViews, 10) || 0;
-    if (thresholdLikes !== undefined) dataToUpdate[NOCODB_THRESHOLD_LIKES_COLUMN || 'threshold_likes'] = parseInt(thresholdLikes, 10) || 0;
-    if (thresholdComments !== undefined) dataToUpdate[NOCODB_THRESHOLD_COMMENTS_COLUMN || 'threshold_comments'] = parseInt(thresholdComments, 10) || 0;
-    if (thresholdVelocity !== undefined) dataToUpdate[NOCODB_THRESHOLD_VELOCITY_COLUMN || 'threshold_velocity'] = parseInt(thresholdVelocity, 10) || 0;
-    if (filterChannels !== undefined) dataToUpdate[NOCODB_FILTER_CHANNELS_COLUMN || 'filter_channels'] = filterChannels;
-    if (filterNiches !== undefined) dataToUpdate[NOCODB_FILTER_NICHES_COLUMN || 'filter_niches'] = filterNiches;
-    if (filterHashtags !== undefined) dataToUpdate[NOCODB_FILTER_HASHTAGS_COLUMN || 'filter_hashtags'] = filterHashtags;
 
+    // Helper function to safely parse int or return null
+    const parseIntOrNull = (value) => {
+        if (value === null || value === undefined || String(value).trim() === '') return null;
+        const parsed = parseInt(value, 10);
+        return isNaN(parsed) ? null : parsed;
+    };
+    // Helper function to safely parse int or return default (for non-nullable fields)
+    const parseIntOrDefault = (value, defaultValue = 0) => {
+        if (value === null || value === undefined) return defaultValue;
+        const parsed = parseInt(value, 10);
+        return isNaN(parsed) ? defaultValue : parsed;
+    };
+
+    // Map existing fields
+    if (thresholdViews !== undefined) dataToUpdate[NOCODB_THRESHOLD_VIEWS_COLUMN || 'threshold_views'] = parseIntOrDefault(thresholdViews, 0);
+    if (thresholdLikes !== undefined) dataToUpdate[NOCODB_THRESHOLD_LIKES_COLUMN || 'threshold_likes'] = parseIntOrDefault(thresholdLikes, 0);
+    if (thresholdComments !== undefined) dataToUpdate[NOCODB_THRESHOLD_COMMENTS_COLUMN || 'threshold_comments'] = parseIntOrDefault(thresholdComments, 0);
+    if (thresholdVelocity !== undefined) dataToUpdate[NOCODB_THRESHOLD_VELOCITY_COLUMN || 'threshold_velocity'] = parseIntOrDefault(thresholdVelocity, 0);
+    if (filterChannels !== undefined) dataToUpdate[NOCODB_FILTER_CHANNELS_COLUMN || 'filter_channels'] = filterChannels; // Keep as string
+
+    // --- Map NEW Fields ---
+    if (thresholdRelativeViewPerformancePercent !== undefined) {
+        dataToUpdate[NOCODB_THRESHOLD_RELATIVE_VIEW_PERFORMANCE_PERCENT_COLUMN || 'threshold_relative_view_performance_percent'] = parseIntOrNull(thresholdRelativeViewPerformancePercent);
+    }
+    if (thresholdRelativeViewMetric !== undefined) {
+        // Add validation if needed (e.g., check against allowed values)
+        dataToUpdate[NOCODB_THRESHOLD_RELATIVE_VIEW_METRIC_COLUMN || 'threshold_relative_view_metric'] = thresholdRelativeViewMetric;
+    }
+    if (thresholdViewsTimeWindowHours !== undefined) {
+        dataToUpdate[NOCODB_THRESHOLD_VIEWS_TIME_WINDOW_HOURS_COLUMN || 'threshold_views_time_window_hours'] = parseIntOrNull(thresholdViewsTimeWindowHours);
+    }
+    if (thresholdLikesTimeWindowHours !== undefined) {
+        dataToUpdate[NOCODB_THRESHOLD_LIKES_TIME_WINDOW_HOURS_COLUMN || 'threshold_likes_time_window_hours'] = parseIntOrNull(thresholdLikesTimeWindowHours);
+    }
+    if (thresholdCommentsTimeWindowHours !== undefined) {
+        dataToUpdate[NOCODB_THRESHOLD_COMMENTS_TIME_WINDOW_HOURS_COLUMN || 'threshold_comments_time_window_hours'] = parseIntOrNull(thresholdCommentsTimeWindowHours);
+    }
+    
     try {
+        // Check if *any* valid data was sent
         if (Object.keys(dataToUpdate).length === 0) {
-            return res.status(200).json({ message: 'No alert preferences provided to update.' });
+            return res.status(400).json({ message: 'No valid alert preferences provided to update.' });
         }
+        console.log('[updateAlertPreferences] Updating NocoDB with data:', dataToUpdate); // Log data being sent
 
         const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
 
-        // Return only the updated preferences, not the whole user object
-        const updatedPreferences = Object.keys(dataToUpdate).reduce((acc, key) => {
-            // Use the original key from dataToUpdate map, which corresponds to the NocoDB column name
-            acc[key] = updatedUser[key];
-            return acc;
-        }, {});
+        // Return only the updated preferences, reflecting the saved state
+        const updatedPreferences = {};
+        for (const key in dataToUpdate) {
+             // Ensure the key exists in the NocoDB column env map to avoid errors if env vars change
+             // This mapping assumes dataToUpdate keys are the NocoDB column names
+             if (updatedUser.hasOwnProperty(key)) { 
+                 updatedPreferences[key] = updatedUser[key];
+             }
+        }
 
         res.status(200).json({
             message: 'Alert preferences updated successfully',
-            preferences: updatedPreferences, // Send back updated values
+            preferences: updatedPreferences, // Send back only what was intended to be updated
         });
 
     } catch (error) {
@@ -391,29 +482,44 @@ const updateAlertTemplates = async (req, res, next) => {
         return res.status(401).json({ message: 'Not authorized, user ID missing' });
     }
 
-    const { 
-        templateTelegram, 
-        templateDiscord, 
-        templateEmailSubject, 
-        templateEmailPreview 
-    } = req.body;
+    // Define expected DB column keys (using env vars or defaults)
+    const telegramCol = NOCODB_TEMPLATE_TELEGRAM_COLUMN || 'alert_template_telegram';
+    const discordCol = NOCODB_TEMPLATE_DISCORD_COLUMN || 'alert_template_discord';
+    const emailSubCol = NOCODB_TEMPLATE_EMAIL_SUBJECT_COLUMN || 'alert_template_email_subject';
+    const emailPreCol = NOCODB_TEMPLATE_EMAIL_PREVIEW_COLUMN || 'alert_template_email_preview';
 
+    const allowedKeys = [telegramCol, discordCol, emailSubCol, emailPreCol];
+
+    // Check if *any* valid key exists in req.body before proceeding
+    const receivedKeys = Object.keys(req.body);
+    const hasValidData = receivedKeys.some(key => allowedKeys.includes(key) && req.body[key] !== undefined);
+
+    if (!hasValidData) {
+        // Use 400 Bad Request because the client sent a request with no usable data
+        return res.status(400).json({ message: 'No valid alert template data provided to update.' });
+    }
+
+    // Build dataToUpdate ONLY with keys that are present in req.body and are allowed
     const dataToUpdate = {};
-    if (templateTelegram !== undefined) dataToUpdate[NOCODB_TEMPLATE_TELEGRAM_COLUMN || 'alert_template_telegram'] = templateTelegram;
-    if (templateDiscord !== undefined) dataToUpdate[NOCODB_TEMPLATE_DISCORD_COLUMN || 'alert_template_discord'] = templateDiscord;
-    if (templateEmailSubject !== undefined) dataToUpdate[NOCODB_TEMPLATE_EMAIL_SUBJECT_COLUMN || 'alert_template_email_subject'] = templateEmailSubject;
-    if (templateEmailPreview !== undefined) dataToUpdate[NOCODB_TEMPLATE_EMAIL_PREVIEW_COLUMN || 'alert_template_email_preview'] = templateEmailPreview;
+    allowedKeys.forEach(key => {
+        if (req.body[key] !== undefined) { // Check if the key exists in the actual request body
+            dataToUpdate[key] = req.body[key];
+        }
+    });
+
+    // The previous check `Object.keys(dataToUpdate).length === 0` is now redundant because of the `hasValidData` check above.
 
     try {
-        if (Object.keys(dataToUpdate).length === 0) {
-            return res.status(200).json({ message: 'No alert templates provided to update.' });
-        }
+        // No need for the length check here anymore
         const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
-        // Return only updated templates
-         const updatedTemplates = Object.keys(dataToUpdate).reduce((acc, key) => {
+        
+        // Return only updated templates based on what was actually sent and updated
+        const updatedTemplates = Object.keys(dataToUpdate).reduce((acc, key) => {
+            // Use the value from updatedUser to ensure it reflects the actual DB state
             acc[key] = updatedUser[key];
             return acc;
         }, {});
+        
         res.status(200).json({
             message: 'Alert templates updated successfully',
             templates: updatedTemplates,
@@ -597,51 +703,510 @@ Body: ${body}
 };
 
 /**
- * @desc    Verify a Telegram access code (provided by user) and link Chat ID
- * @route   POST /api/users/notifications/telegram/verify-code
+ * @desc    Generate and send a Telegram verification code to the user's provided Chat ID.
+ * @route   POST /api/users/telegram/send-code
+ * @access  Private
+ */
+const sendTelegramVerificationCode = async (req, res, next) => {
+  const userId = req.userId;
+  if (!userId) {
+    return res.status(401).json({ message: 'Not authorized' });
+  }
+
+  const { chatId } = req.body;
+  if (!chatId || typeof chatId !== 'string' || !/^-?\d+$/.test(chatId)) {
+    return res.status(400).json({ message: 'Valid Telegram Chat ID is required.' });
+  }
+
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) {
+    console.error('Telegram Bot Token not configured in environment variables.');
+    return res.status(500).json({ message: 'Telegram integration is not configured on the server.' });
+  }
+
+  try {
+    // 1. Generate Verification Code (6 digits)
+    const verificationCode = crypto.randomInt(100000, 999999).toString();
+    const expiryMinutes = 10;
+    const expiryDate = new Date(Date.now() + expiryMinutes * 60000);
+
+    // 2. Store Code and Expiry in NocoDB
+    const dataToUpdate = {
+      [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: verificationCode,
+      [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: expiryDate.toISOString(),
+      // Store the attempted chat ID temporarily or permanently?
+      // Let's store it permanently here, assuming user intends to use this ID.
+      // If verification fails, they can try again with a different ID.
+      [NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']: chatId,
+      [NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified']: false // Ensure verified is false
+    };
+    await NocoDBService.updateUser(userId, dataToUpdate);
+    console.log(`Stored Telegram verification code for user ${userId}.`);
+
+    // 3. Send Code via Telegram Bot
+    const bot = new TelegramBot(botToken);
+    const messageText = `Your Trendy Bot verification code is: *${verificationCode}*\n\nThis code will expire in ${expiryMinutes} minutes.`;
+    
+    await bot.sendMessage(chatId, messageText, { parse_mode: 'Markdown' });
+    console.log(`Sent verification code to Chat ID ${chatId} for user ${userId}.`);
+
+    res.status(200).json({ message: `Verification code sent to Telegram Chat ID ${chatId}. Please check Telegram.` });
+
+  } catch (error) {
+    console.error(`Error sending Telegram verification code for user ${userId}:`, error.response?.body || error.message || error);
+    // Check for specific Telegram errors (e.g., chat not found, bot blocked)
+     if (error.response && error.response.body && error.response.body.error_code === 400 && error.response.body.description.includes('chat not found')) {
+        return res.status(400).json({ message: 'Could not send message. Please ensure the Chat ID is correct and you have started a conversation with the bot.' });
+     } else if (error.response && error.response.body && error.response.body.error_code === 403) { // Forbidden, likely bot blocked
+          return res.status(403).json({ message: 'Could not send message. Please ensure you have not blocked the bot.' });
+     }
+    // Pass other errors to generic handler
+    next(new Error('Failed to send Telegram verification code.')); 
+  }
+};
+
+/**
+ * @desc    Verify a Telegram verification code submitted by the user.
+ * @route   POST /api/users/telegram/verify-code
  * @access  Private
  */
 const verifyTelegramCode = async (req, res, next) => {
-    const userId = req.userId; // From 'protect' middleware
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { verificationCode } = req.body; 
+    if (!verificationCode || typeof verificationCode !== 'string' || !/\d{6}/.test(verificationCode)) {
+        return res.status(400).json({ message: 'Invalid verification code format. Expected 6 digits.' });
+    }
+
+    try {
+        // 1. Get user record with stored code and expiry
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const storedCode = userRecord[NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code'];
+        const expiryString = userRecord[NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry'];
+        const storedChatId = userRecord[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']; // Get stored chat ID
+
+        if (!storedCode || !expiryString || !storedChatId) {
+             return res.status(400).json({ message: 'Verification process not initiated or chat ID missing. Please request a code first.' });
+        }
+
+        // 2. Check Expiry
+        const expiryDate = new Date(expiryString);
+        if (isNaN(expiryDate.getTime()) || expiryDate < new Date()) {
+            // Optionally clear the expired code here
+            // await NocoDBService.updateUser(userId, { 
+            //     [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: null,
+            //     [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: null
+            // });
+            return res.status(400).json({ message: 'Verification code has expired. Please request a new one.' });
+        }
+
+        // 3. Compare Codes
+        if (verificationCode !== storedCode) {
+             return res.status(400).json({ message: 'Invalid verification code.' });
+        }
+
+        // 4. Verification Successful: Update NocoDB
+        const dataToUpdate = {
+            [NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified']: true,
+            [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: null, // Clear code
+            [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: null,   // Clear expiry
+             // Keep storedChatId as it's now verified
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Telegram verification successful for user ${userId} with Chat ID ${storedChatId}.`);
+
+        // 5. Send confirmation message back via Telegram
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        if (botToken) {
+             try {
+                const bot = new TelegramBot(botToken);
+                await bot.sendMessage(storedChatId, '✅ Your Telegram account has been successfully connected to Trendy Bot!');
+             } catch (confirmError) {
+                 console.error(`Failed to send Telegram confirmation message to ${storedChatId} for user ${userId}:`, confirmError.message);
+                 // Don't fail the whole request for this, just log it.
+             }
+        } else {
+             console.warn('Telegram Bot Token not configured. Skipping confirmation message.')
+        }
+
+         // 6. Notify Frontend via WebSocket
+         sendToUser(userId, { 
+             type: 'telegramStatusUpdate', 
+             payload: { 
+                 verified: true, 
+                 chatId: storedChatId 
+             }
+         });
+
+        res.status(200).json({ 
+            message: 'Telegram account connected successfully.', 
+            chatId: storedChatId 
+        });
+
+    } catch (error) {
+        console.error(`Error verifying Telegram code for user ${userId}:`, error);
+        next(new Error('Failed to verify Telegram code due to a server error.')); 
+    }
+};
+
+/**
+ * @desc    Disconnect the user's Telegram account.
+ * @route   POST /api/users/telegram/disconnect
+ * @access  Private
+ */
+const disconnectTelegram = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    try {
+        // Define column names using env variables or defaults
+        const chatIdCol = NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id';
+        const verifiedCol = NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified';
+        const codeCol = NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code';
+        const expiryCol = NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry';
+
+        // Prepare data to clear Telegram connection info
+        const dataToUpdate = {
+            [chatIdCol]: null,
+            [verifiedCol]: false,
+            [codeCol]: null,
+            [expiryCol]: null
+        };
+
+        // Update the user record in NocoDB
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Cleared Telegram connection info for user ${userId}.`);
+
+        // Notify Frontend via WebSocket
+        sendToUser(userId, { 
+            type: 'telegramStatusUpdate', 
+            payload: { 
+                verified: false, 
+                chatId: null 
+            }
+        });
+
+        res.status(200).json({ 
+            message: 'Telegram account disconnected successfully.', 
+        });
+
+    } catch (error) {
+        console.error(`Error disconnecting Telegram for user ${userId}:`, error);
+        next(new Error('Failed to disconnect Telegram account due to a server error.')); 
+    }
+};
+
+/**
+ * @desc    Update user profile photo
+ * @route   PUT /api/users/profile/photo
+ * @access  Private
+ */
+const updateProfilePhoto = async (req, res, next) => {
+    // Correctly read userId attached directly by the protect middleware
+    const userId = req.userId; 
+    if (!userId) {
+        // Keep this check, although protect middleware should prevent this
+        return res.status(401).json({ message: 'Not authorized, user ID missing' });
+    }
+
+    if (!req.file) {
+        // This might happen if the file filter rejected the file
+        return res.status(400).json({ message: 'File upload failed. Please ensure you are uploading a valid image (JPG, PNG, GIF) under 2MB.' });
+    }
+
+    try {
+        // Construct the public URL path based on static serving setup
+        const publicUrlPath = `/uploads/avatars/${req.file.filename}`;
+
+        // Prepare data for NocoDB update
+        const photoUrlColumn = NOCODB_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
+        const dataToUpdate = {
+            [photoUrlColumn]: publicUrlPath
+        };
+
+        // Update the user record in NocoDB
+        const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Updated profile photo URL for user ${userId} to: ${publicUrlPath}`);
+
+        // Respond with the new photo URL
+        res.status(200).json({
+            message: 'Profile photo updated successfully',
+            photoUrl: publicUrlPath, // Send back the URL for the frontend to use
+            // Optionally send back the relevant part of the updated user object if needed
+            // user: { [photoUrlColumn]: updatedUser[photoUrlColumn] } 
+        });
+
+    } catch (error) {
+        console.error(`Error updating profile photo for user ${userId}:`, error);
+        // Check if it's a multer error (e.g., file too large)
+        if (error instanceof multer.MulterError) {
+            return res.status(400).json({ message: `File upload error: ${error.message}` });
+        }
+        // Pass other errors to the generic error handler
+        next(new Error('Failed to update profile photo due to a server error.'));
+    }
+};
+
+/**
+ * @desc    Change user password
+ * @route   POST /api/users/change-password
+ * @access  Private
+ */
+const changePassword = async (req, res, next) => {
+    const userId = req.userId;
     if (!userId) {
         return res.status(401).json({ message: 'Not authorized, user ID missing' });
     }
 
-    // Frontend now sends the access code (stored in DB) and chat ID (from bot)
-    const { code, chatId } = req.body; 
+    const { currentPassword, newPassword } = req.body;
 
-    if (!code || !chatId) {
-        return res.status(400).json({ message: 'Verification code and Telegram Chat ID are required.' });
+    // Validation
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Please provide both current and new passwords.' });
     }
-     // Basic format checks
-     if (typeof code !== 'string' || code.length < 8 || code.length > 12) {
-        return res.status(400).json({ message: 'Invalid verification code format.' });
-     }
-      if (typeof chatId !== 'string' || !/^-?\d+$/.test(chatId)) { 
-        return res.status(400).json({ message: 'Invalid Telegram Chat ID format.' });
-     }
+    if (newPassword.length < 8) {
+        return res.status(400).json({ message: 'New password must be at least 8 characters.' });
+    }
+
+    const passwordNocoDbColumn = NOCODB_PASSWORD_COLUMN;
+    if (!passwordNocoDbColumn) {
+        console.error("[changePassword] Error: NOCODB_PASSWORD_COLUMN environment variable not set!");
+        return next(new Error("Server configuration error: Missing password column name.")); 
+    }
 
     try {
-        // Use the new service function
-        const result = await SubscriptionLogicService.verifyTelegramCodeAndUpdate(userId, code, chatId);
-
-        if (result.success) {
-            res.status(200).json({ message: result.message }); // e.g., 'Telegram account connected successfully.'
-        } else {
-            // Service handles specific errors, return 400 for user-fixable issues
-            console.warn(`Telegram verification failed for user ${userId}: ${result.message}`);
-            return res.status(400).json({ message: result.message }); 
+        // 1. Fetch current user to get the stored hash
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) {
+            // Should not happen if protect middleware worked, but good check
+            return res.status(404).json({ message: 'User not found.' });
         }
+
+        const storedHash = userRecord[passwordNocoDbColumn];
+        if (!storedHash) {
+            console.error(`[changePassword] User ${userId} has no password hash stored.`);
+            return res.status(500).json({ message: 'Cannot change password, account issue.' });
+        }
+
+        // 2. Compare current password with stored hash
+        const isMatch = await bcrypt.compare(currentPassword, storedHash);
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Incorrect current password.' });
+        }
+
+        // 3. Hash the new password
+        const salt = await bcrypt.genSalt(10);
+        const newHashedPassword = await bcrypt.hash(newPassword, salt);
+
+        // 4. Update NocoDB with the new hash
+        const dataToUpdate = {
+            [passwordNocoDbColumn]: newHashedPassword
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+
+        console.log(`[changePassword] Password updated successfully for user ${userId}.`);
+        res.status(200).json({ message: 'Password changed successfully.' });
+
     } catch (error) {
-        // Catch unexpected errors from the service or controller
-        console.error(`Unexpected Error in verifyTelegramCode for user ${userId}:`, error);
-        next(new Error('Failed to verify Telegram code due to a server error.')); // Generic error
+        console.error(`[changePassword] Failed for user ${userId}:`, error);
+        next(error); // Pass to generic error handler
+    }
+};
+
+/**
+ * @desc    Setup 2FA: Generate secret and OTPAuth URI
+ * @route   GET /api/users/2fa/setup
+ * @access  Private
+ */
+const setup2FA = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const secretColumn = NOCODB_2FA_SECRET_COLUMN;
+    const emailColumn = NOCODB_EMAIL_COLUMN;
+    if (!secretColumn || !emailColumn) {
+        console.error("[setup2FA] Error: Required 2FA/Email column environment variables not set!");
+        return next(new Error("Server configuration error: Missing 2FA column names."));
+    }
+
+    try {
+        // 1. Fetch user's email for the OTPAuth label
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord || !userRecord[emailColumn]) {
+            return res.status(404).json({ message: 'User email not found, cannot setup 2FA.' });
+        }
+        const userEmail = userRecord[emailColumn];
+        const appName = 'TrendyBot'; // Or your app name
+
+        // 2. Generate a new secret
+        const secret = authenticator.generateSecret();
+
+        // 3. Store the *unverified* secret in the database
+        // We set enabled=false until they verify with the token
+        const dataToUpdate = {
+            [secretColumn]: secret,
+            // Optionally clear enabled flag if they are re-running setup
+            [NOCODB_2FA_ENABLED_COLUMN]: false 
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`[setup2FA] Generated and stored temporary 2FA secret for user ${userId}.`);
+
+        // 4. Generate the otpauth:// URI for the QR code
+        const otpauthUri = authenticator.keyuri(userEmail, appName, secret);
+
+        // 5. Return the secret and URI to the frontend
+        res.status(200).json({
+            secret: secret, // For manual entry
+            otpauthUri: otpauthUri // For QR code generation
+        });
+
+    } catch (error) {
+        console.error(`[setup2FA] Failed for user ${userId}:`, error);
+        next(error);
+    }
+};
+
+/**
+ * @desc    Verify 2FA TOTP token and enable 2FA
+ * @route   POST /api/users/2fa/verify
+ * @access  Private
+ */
+const verify2FA = async (req, res, next) => {
+    const userId = req.userId;
+    const { token: userToken } = req.body;
+
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+    if (!userToken || !/\d{6}/.test(userToken)) {
+        return res.status(400).json({ message: 'Invalid or missing 6-digit token.' });
+    }
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        const secret = userRecord[NOCODB_2FA_SECRET_COLUMN];
+
+        if (!secret) {
+            return res.status(400).json({ message: '2FA setup not initiated for this user.' });
+        }
+
+        // Verify the token
+        const isValid = authenticator.verify({ token: userToken, secret });
+
+        if (isValid) {
+            // Token is valid, enable 2FA for the user
+            await NocoDBService.updateUser(userId, {
+                [NOCODB_2FA_ENABLED_COLUMN]: true,
+                // Optionally clear the secret here if it's only stored temporarily during setup,
+                // or keep it if needed for recovery (depends on your security model)
+            });
+            console.log(`2FA enabled successfully for user ID: ${userId}`);
+            res.status(200).json({ message: 'Two-factor authentication enabled successfully.' });
+        } else {
+            // Token is invalid
+            console.log(`Invalid 2FA token attempt for user ID: ${userId}`);
+            res.status(400).json({ message: 'Invalid verification code.' });
+        }
+
+    } catch (error) {
+        console.error(`Error verifying 2FA for user ID: ${userId}:`, error);
+        next(error); 
+    }
+};
+
+/**
+ * @desc    Disable Two-Factor Authentication for the user
+ * @route   POST /api/users/2fa/disable
+ * @access  Private
+ */
+const disable2FA = async (req, res, next) => {
+    const userId = req.userId; // Get user ID from authenticated request (assuming 'protect' middleware)
+
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    try {
+        console.log(`Attempting to disable 2FA for user ID: ${userId}`);
+        // Update the user record in NocoDB
+        const updateResult = await NocoDBService.updateUser(userId, {
+            [NOCODB_2FA_ENABLED_COLUMN]: false,
+            [NOCODB_2FA_SECRET_COLUMN]: null, // Clear the secret when disabling
+        });
+
+        // NocoDBService.updateUser should ideally throw an error on failure
+        // or return the updated record.
+        // We assume success if no error is thrown.
+        console.log(`Successfully disabled 2FA for user ID: ${userId}`);
+        res.status(200).json({ message: 'Two-factor authentication disabled successfully.' });
+
+    } catch (error) {
+        console.error(`Error disabling 2FA for user ID: ${userId}`, error);
+        // Handle specific errors like user not found if NocoDBService provides them
+        if (error.message && error.message.includes('Not Found')) { // Example error check
+             return res.status(404).json({ message: 'User not found.' });
+        }
+        next(error); // Pass other errors to the central handler
+    }
+};
+
+/**
+ * @desc    Delete user account
+ * @route   DELETE /api/users/account
+ * @access  Private
+ */
+const deleteAccount = async (req, res, next) => {
+    const userId = req.userId; // Get user ID from authenticated request (protect middleware)
+
+    if (!userId) {
+        // This should ideally be caught by protect middleware
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    try {
+        console.log(`Attempting to delete account for user ID: ${userId}`);
+
+        // --- Subscription Cancellation (Placeholder/Warning) ---
+        // TODO: Implement actual subscription cancellation logic if possible (e.g., PayPal API call)
+        // This is crucial to avoid charging users after account deletion.
+        console.warn(`ACTION REQUIRED: Account deletion initiated for user ${userId}. Please manually verify and cancel any active subscriptions (e.g., PayPal) associated with this user.`);
+        // ------------------------------------------------------
+
+        // Delete user record from NocoDB
+        const deleted = await NocoDBService.deleteUser(userId);
+
+        if (deleted) {
+            console.log(`Successfully deleted account for user ID: ${userId}`);
+            // Respond with success - frontend should handle logout/redirect
+            res.status(200).json({ message: 'Account deleted successfully.' });
+        } else {
+             // deleteUser service should handle 404 as success, so reaching here implies another issue
+            console.error(`NocoDBService.deleteUser reported failure for user ID: ${userId} but did not throw an error.`);
+            res.status(500).json({ message: 'Account deletion failed. Could not remove user data.' });
+        }
+
+    } catch (error) {
+        console.error(`Error deleting account for user ID: ${userId}`, error);
+        // Pass error to the central handler
+        next(new Error('Failed to delete account due to a server error.')); 
     }
 };
 
 module.exports = {
   updateUserPreferences,
   updateProfile,
+  updateProfilePhoto,
   updateNotificationSettings,
   getNotificationSettings,
   getAlertPreferences,
@@ -649,5 +1214,12 @@ module.exports = {
   getAlertTemplates,
   updateAlertTemplates,
   sendTestNotification,
-  verifyTelegramCode
+  sendTelegramVerificationCode,
+  verifyTelegramCode,
+  disconnectTelegram,
+  changePassword,
+  setup2FA,
+  verify2FA,
+  disable2FA,
+  deleteAccount
 }; 

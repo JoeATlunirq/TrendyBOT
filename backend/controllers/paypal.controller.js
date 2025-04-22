@@ -5,6 +5,7 @@ const paypal = require('@paypal/paypal-server-sdk');
 const crypto = require('crypto'); // Required for manual verification
 const https = require('https'); // Required to fetch certificate
 const crc32 = require('crc/crc32'); // Required for CRC32 checksum
+const { sendToUser } = require('../server'); // Import the WebSocket helper
 
 // Destructure specific webhook verification methods if available (or use direct SDK object)
 // Assuming the verification methods might be directly available
@@ -226,7 +227,109 @@ const handleWebhook = async (req, res, next) => {
             console.log(`Updating user ${user.Id} with data:`, dataToUpdate);
             await NocoDBService.updateUser(user.Id, dataToUpdate);
             console.log(`User ${user.Id} successfully updated for cancellation.`);
+
+            // --- Notify Frontend via WebSocket ---
+            sendToUser(user.Id, { 
+                type: 'subscriptionUpdate', 
+                payload: { 
+                    plan: null, 
+                    status: 'CANCELLED' 
+                }
+            });
+            // -------------------------------------
+
         } 
+        // --- Handle Activation/Update Events ---
+        else if (['BILLING.SUBSCRIPTION.ACTIVATED', 'BILLING.SUBSCRIPTION.UPDATED', 'PAYMENT.SALE.COMPLETED'].includes(eventType)) {
+            console.log(`Processing ${eventType} event...`);
+            let subscriptionId = eventBody.resource?.id; // For SUBSCRIPTION events
+            let relevantSubscriptionId = subscriptionId; // Default to the main resource ID
+            let planId = eventBody.resource?.plan_id; 
+            let status = eventBody.resource?.status; // Usually ACTIVE for these events
+
+            // For PAYMENT.SALE.COMPLETED, the subscription ID is nested
+            if (eventType === 'PAYMENT.SALE.COMPLETED') {
+                 // Check if this is related to a subscription agreement
+                 const billingAgreementId = eventBody.resource?.billing_agreement_id;
+                 if (billingAgreementId) {
+                      console.log(`Payment related to Billing Agreement (Subscription ID): ${billingAgreementId}`);
+                      relevantSubscriptionId = billingAgreementId; // This is the ID we store
+                 } else {
+                      console.log('Payment sale completed, but not linked to a known subscription/agreement. Ignoring.');
+                      return res.status(200).send('Webhook received, payment not linked to subscription'); 
+                 }
+                 // We might need to fetch the subscription details using billingAgreementId 
+                 // if plan_id and status aren't directly in the PAYMENT event.
+                 // This adds complexity and an API call. Let's assume ACTIVATED/UPDATED events
+                 // are the primary source for plan changes for now.
+                 // If only PAYMENT.SALE.COMPLETED is used for activation, fetch is needed.
+                 // For now, let's log a warning if planId/status are missing here.
+                 if (!planId || !status) {
+                     console.warn(`PAYMENT.SALE.COMPLETED for ${relevantSubscriptionId} missing direct plan_id or status. Relying on subsequent ACTIVATED/UPDATED events.`);
+                     // Optionally, you could trigger a fetch here if necessary
+                     // const subDetails = await paypalClient.getSubscription(relevantSubscriptionId);
+                     // planId = subDetails.plan_id;
+                     // status = subDetails.status;
+                 }
+            }
+
+            if (!relevantSubscriptionId) {
+                console.error(`Could not extract subscription ID from ${eventType} event resource.`);
+                return res.status(400).send('Malformed event data');
+            }
+            if (!planId) {
+                console.warn(`Could not extract plan ID from ${eventType} event for subscription ${relevantSubscriptionId}. May need separate fetch or rely on other events.`);
+                 // Cannot proceed without a plan ID to map
+                 return res.status(200).send('Webhook received, plan ID missing'); 
+            }
+            if (!status || status !== 'ACTIVE') {
+                 console.warn(`Subscription status from ${eventType} event for ${relevantSubscriptionId} is ${status}. Processing only ACTIVE status.`);
+                 return res.status(200).send('Webhook received, status not ACTIVE');
+            }
+
+            console.log(`Subscription ID: ${relevantSubscriptionId}, Plan ID: ${planId}, Status: ${status}`);
+
+            // Map Plan ID
+            const planName = PAYPAL_PLAN_MAP[planId];
+            if (!planName) {
+                 console.error(`Could not map PayPal Plan ID ${planId} (from ${eventType}) to an internal plan name.`);
+                 // Don't error out completely, but log issue
+                 return res.status(200).send('Webhook received, unknown plan ID'); 
+            }
+            console.log(`Mapped Plan ID ${planId} to internal plan: ${planName}`);
+
+            // Find User in NocoDB 
+            const user = await NocoDBService.findUserBySubscriptionId(relevantSubscriptionId);
+            if (!user) {
+                console.warn(`Received ${eventType} webhook for subscription ${relevantSubscriptionId}, but no matching user found. Maybe initial activation via approveSubscription?`);
+                // This might happen if the webhook arrives before approveSubscription finishes OR
+                // if the user signed up directly via PayPal without going through the app flow first.
+                // Decide how to handle this - maybe create a pending record or ignore.
+                return res.status(200).send('Webhook received, user not found');
+            }
+            console.log(`Found user ${user.Id} for subscription ${relevantSubscriptionId}`);
+
+            // Update User in NocoDB
+            const dataToUpdate = {
+                [NOCODB_CURRENT_PLAN_COLUMN || 'current_plan']: planName,
+                [NOCODB_SUB_STATUS_COLUMN || 'subscription_status']: 'ACTIVE' // Assuming these events mean ACTIVE
+                // We might already have the correct subscription ID from approveSubscription
+            };
+            console.log(`Updating user ${user.Id} based on ${eventType} event with data:`, dataToUpdate);
+            await NocoDBService.updateUser(user.Id, dataToUpdate);
+            console.log(`User ${user.Id} successfully updated.`);
+
+            // --- Notify Frontend via WebSocket ---
+            sendToUser(user.Id, { 
+                type: 'subscriptionUpdate', 
+                payload: { 
+                    plan: planName, 
+                    status: 'ACTIVE' 
+                }
+            });
+            // -------------------------------------
+        }
+        // -------------------------------------
         else {
             console.log(`Ignoring unhandled event type: ${eventType}`);
         }

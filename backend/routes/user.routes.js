@@ -1,8 +1,43 @@
 const express = require('express');
-const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, verifyTelegramCode } = require('../controllers/user.controller');
+const multer = require('multer'); // Import multer
+const path = require('path'); // Import path for filename generation
+const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, sendTelegramVerificationCode, verifyTelegramCode, disconnectTelegram, updateProfilePhoto, changePassword, setup2FA, verify2FA, disable2FA, deleteAccount } = require('../controllers/user.controller');
 const { protect } = require('../middleware/auth.middleware'); // Import the protect middleware
 
 const router = express.Router();
+
+// --- Multer Configuration for Avatar Uploads ---
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'public/uploads/avatars/'); // Ensure this directory exists
+    },
+    filename: function (req, file, cb) {
+        // Use timestamp and original filename parts for uniqueness
+        // Avoid relying on req.user here as it might not be populated yet
+        const uniqueSuffix = Date.now(); 
+        const extension = path.extname(file.originalname);
+        const originalNameWithoutExt = path.basename(file.originalname, extension);
+        // Sanitize originalNameWithoutExt slightly to avoid problematic characters
+        const safeOriginalName = originalNameWithoutExt.replace(/[^a-zA-Z0-9_\-\.]/g, '_'); 
+        cb(null, `${file.fieldname}-${safeOriginalName}-${uniqueSuffix}${extension}`);
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    // Accept only image files
+    if (file.mimetype.startsWith('image/')) {
+        cb(null, true);
+    } else {
+        cb(new Error('Not an image! Please upload only images.'), false);
+    }
+};
+
+const upload = multer({ 
+    storage: storage, 
+    limits: { fileSize: 1024 * 1024 * 2 }, // Limit file size to 2MB
+    fileFilter: fileFilter 
+});
+// -----------------------------------------------
 
 // @route   PUT /api/users/preferences
 // @desc    Update user preferences (and mark onboarding complete)
@@ -15,6 +50,42 @@ router.put('/preferences', protect, updateUserPreferences);
 // @desc    Update user profile (name, company)
 // @access  Private
 router.put('/profile', protect, updateProfile);
+
+// --- Profile Photo Upload Route ---
+// @route   PUT /api/users/profile/photo
+// @desc    Update user profile photo
+// @access  Private
+router.put(
+    '/profile/photo', 
+    protect, // Ensure user is logged in
+    upload.single('avatar'), // Handle single file upload named 'avatar'
+    updateProfilePhoto // Controller function
+);
+// ----------------------------------
+
+// --- Change Password Route ---
+// @route   POST /api/users/change-password
+// @desc    Change user's password
+// @access  Private
+router.post('/change-password', protect, changePassword);
+// ----------------------------
+
+// --- Two-Factor Authentication Routes ---
+// @route   GET /api/users/2fa/setup
+// @desc    Generate a new 2FA secret and QR code URI for the user
+// @access  Private
+router.get('/2fa/setup', protect, setup2FA);
+
+// @route   POST /api/users/2fa/verify
+// @desc    Verify the TOTP token and enable 2FA for the user
+// @access  Private
+router.post('/2fa/verify', protect, verify2FA);
+
+// @route   POST /api/users/2fa/disable
+// @desc    Disable 2FA for the user
+// @access  Private
+router.post('/2fa/disable', protect, disable2FA);
+// ------------------------------------
 
 // Notification Settings routes
 // @route   GET /api/users/notifications
@@ -33,8 +104,20 @@ router.put('/notifications', protect, updateNotificationSettings);
 router.post('/notifications/test', protect, sendTestNotification);
 
 // Telegram Verification routes
-// router.post('/notifications/telegram/request-code', protect, requestTelegramCode); // REMOVED - No longer needed
-router.post('/notifications/telegram/verify-code', protect, verifyTelegramCode);
+// @route   POST /api/users/telegram/send-code
+// @desc    Send a verification code to the provided Telegram Chat ID
+// @access  Private
+router.post('/telegram/send-code', protect, sendTelegramVerificationCode);
+
+// @route   POST /api/users/telegram/verify-code
+// @desc    Verify the submitted Telegram code and link the account
+// @access  Private
+router.post('/telegram/verify-code', protect, verifyTelegramCode);
+
+// @route   POST /api/users/telegram/disconnect
+// @desc    Disconnect the linked Telegram account
+// @access  Private
+router.post('/telegram/disconnect', protect, disconnectTelegram);
 
 // Alert Preferences routes
 // @route   GET /api/users/alert-preferences
@@ -57,5 +140,12 @@ router.get('/alert-templates', protect, getAlertTemplates);
 // @desc    Update user alert templates
 // @access  Private
 router.put('/alert-templates', protect, updateAlertTemplates);
+
+// --- Delete Account Route ---
+// @route   DELETE /api/users/account
+// @desc    Delete the authenticated user's account
+// @access  Private
+router.delete('/account', protect, deleteAccount);
+// ---------------------------
 
 module.exports = router; 

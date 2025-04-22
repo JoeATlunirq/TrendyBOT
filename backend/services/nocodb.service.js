@@ -227,6 +227,43 @@ const findUsers = async (filterString) => {
     }
 };
 
+/**
+ * Deletes a user record from NocoDB.
+ * @param {string|number} userId - The ID of the user to delete.
+ * @returns {Promise<boolean>} True if deletion was successful (or user didn't exist), false otherwise.
+ * @throws {Error} If the API request fails unexpectedly.
+ */
+const deleteUser = async (userId) => {
+    if (!userId) {
+        console.error('deleteUser called without userId');
+        return false;
+    }
+    try {
+        console.log(`Attempting to delete user record with ID: ${userId}`);
+        // NocoDB v2 DELETE /records expects IDs in the body
+        const response = await nocoAxios.delete('/records', {
+            data: {
+                Id: userId // Use singular 'Id' based on the error message
+            }
+        });
+        
+        console.log(`NocoDB deleteUser response for ID ${userId}: Status ${response.status}`, response.data);
+        return response.status >= 200 && response.status < 300;
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            console.warn(`User record not found for deletion (ID: ${userId}), considering deletion successful.`);
+            return true; 
+        }
+        // Check for the specific 422 error we saw
+        if (error.response && error.response.status === 422) {
+            console.error(`NocoDB validation error during delete for user ${userId}:`, error.response.data);
+            // Re-throw a more specific error or handle differently if needed
+        }
+        handleNocoError(error, `delete user ${userId}`);
+        return false; 
+    }
+};
+
 module.exports = {
     findUserByEmail,
     createUser,
@@ -234,4 +271,5 @@ module.exports = {
     getUserRecordById,
     findUserBySubscriptionId,
     findUsers,
+    deleteUser,
 }; 

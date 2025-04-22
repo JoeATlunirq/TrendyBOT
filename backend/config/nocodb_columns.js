@@ -35,4 +35,17 @@ module.exports = {
     TRIAL_STARTED_AT: process.env.NOCODB_TRIAL_STARTED_AT_COLUMN || 'trial_started_at',
     TRIAL_EXPIRES_AT: process.env.NOCODB_TRIAL_EXPIRES_AT_COLUMN || 'trial_expires_at',
     IS_TRIAL_USED: process.env.NOCODB_IS_TRIAL_USED_COLUMN || 'is_trial_used',
+    // --- Add PayPal Subscription ID Column ---
+    PAYPAL_SUB_ID: process.env.NOCODB_PAYPAL_SUB_ID_COLUMN || 'paypal_subscription_id',
+    // ----------------------------------------
+
+    // --- Add 2FA Columns ---
+    IS_2FA_ENABLED: process.env.NOCODB_2FA_ENABLED_COLUMN || 'is_two_factor_enabled',
+    TWO_FACTOR_SECRET: process.env.NOCODB_2FA_SECRET_COLUMN || 'two_factor_secret',
+    // -------------------------
+
+    // --- Add Password Reset Columns ---
+    PASSWORD_RESET_TOKEN: process.env.NOCODB_PASSWORD_RESET_TOKEN_COLUMN || 'password_reset_token',
+    PASSWORD_RESET_EXPIRES: process.env.NOCODB_PASSWORD_RESET_EXPIRES_COLUMN || 'password_reset_expires',
+    // --------------------------------
 }; 

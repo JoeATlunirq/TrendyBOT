@@ -19,9 +19,10 @@ const protect = async (req, res, next) => {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-      // Get user ID from token payload (assuming payload is { id: userId, ... })
-      const userId = decoded.id;
+      // Get user ID from token payload (should be { userId: ..., ... } now)
+      const userId = decoded.userId;
       if (!userId) {
+        // This specific error is helpful for debugging
         throw new Error('Token payload missing user ID');
       }
 
