@@ -7,33 +7,19 @@ const { protect } = require('../middleware/auth.middleware'); // Import the prot
 const router = express.Router();
 
 // --- Multer Configuration for Avatar Uploads ---
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'public/uploads/avatars/'); // Ensure this directory exists
-    },
-    filename: function (req, file, cb) {
-        // Use timestamp and original filename parts for uniqueness
-        // Avoid relying on req.user here as it might not be populated yet
-        const uniqueSuffix = Date.now(); 
-        const extension = path.extname(file.originalname);
-        const originalNameWithoutExt = path.basename(file.originalname, extension);
-        // Sanitize originalNameWithoutExt slightly to avoid problematic characters
-        const safeOriginalName = originalNameWithoutExt.replace(/[^a-zA-Z0-9_\-\.]/g, '_'); 
-        cb(null, `${file.fieldname}-${safeOriginalName}-${uniqueSuffix}${extension}`);
-    }
-});
-
 const fileFilter = (req, file, cb) => {
     // Accept only image files
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
+        // Reject file
         cb(new Error('Not an image! Please upload only images.'), false);
     }
 };
 
+// USE memoryStorage() instead of diskStorage
 const upload = multer({ 
-    storage: storage, 
+    storage: multer.memoryStorage(), // <-- CHANGED
     limits: { fileSize: 1024 * 1024 * 2 }, // Limit file size to 2MB
     fileFilter: fileFilter 
 });
