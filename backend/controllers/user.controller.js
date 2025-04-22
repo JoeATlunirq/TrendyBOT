@@ -1000,40 +1000,33 @@ const updateProfilePhoto = async (req, res, next) => {
             },
             // Make the file publicly readable - REMOVED because bucket has Uniform access
             // public: true, 
-            // Explicitly set predefined ACL to publicRead - TRY THIS
-            predefinedAcl: 'publicRead',
+            // Explicitly set predefined ACL to publicRead - REMOVED due to Org Policy
+            // predefinedAcl: 'publicRead',
         });
 
-        // --- DETAILED LOGGING ---
-        // console.log(`[updateProfilePhoto Debug] GCS_BUCKET_NAME: ${process.env.GCS_BUCKET_NAME}`);
-        // console.log(`[updateProfilePhoto Debug] gcsFileName: ${gcsFileName}`);
-        // console.log(`[updateProfilePhoto Debug] Constructing publicUrl with: https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`);
-        // --- END DETAILED LOGGING ---
+        // --- SAVE OBJECT PATH, NOT PUBLIC URL ---
+        // Construct the object path
+        const objectPath = gcsFileName; // e.g., avatars/user-1-1745353625918.jpg
+        // Get the public URL (still useful for logging maybe, but don't save)
+        // const publicUrl = `https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`;
+        
+        console.log(`[updateProfilePhoto] File uploaded to GCS for user ${userId}. Path: ${objectPath}`);
 
-        // Get the public URL
-        const publicUrl = `https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`;
-
-        // --- DETAILED LOGGING ---
-        // console.log(`[updateProfilePhoto Debug] Constructed publicUrl: ${publicUrl}`);
-        // --- END DETAILED LOGGING ---
-
-        console.log(`[updateProfilePhoto] File uploaded to GCS for user ${userId}: ${publicUrl}`);
-
-        // Prepare data for NocoDB update
+        // Prepare data for NocoDB update - SAVE THE PATH
         const photoUrlColumn = NOCODB_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
         const dataToUpdate = {
-            [photoUrlColumn]: publicUrl // Save the FULL GCS URL
+            [photoUrlColumn]: objectPath // Save the GCS object path
         };
         // console.log(`[updateProfilePhoto Debug] Data to update NocoDB:`, dataToUpdate);
 
         // Update the user record in NocoDB
         const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
-        console.log(`[updateProfilePhoto] Updated NocoDB profile photo URL for user ${userId}`);
+        console.log(`[updateProfilePhoto] Updated NocoDB profile photo PATH for user ${userId}`);
 
-        // Respond with the new photo URL
+        // Respond with success and the *path* (frontend will need to fetch signed URL)
         res.status(200).json({
             message: 'Profile photo updated successfully',
-            photoUrl: publicUrl, // Send back the full GCS URL
+            photoPath: objectPath, // Send back the object path
         });
 
     } catch (error) {
