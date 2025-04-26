@@ -61,11 +61,13 @@ minimalServer.listen(PORT, () => {
 server.listen(PORT, () => { // <<< RESTORED ORIGINAL SERVER LISTEN
   console.log(`<<<<< EXPRESS SERVER LISTENING ON PORT ${PORT} >>>>>`); // <<< MODIFIED STARTUP LOG 2
 
-  // /* COMMENTED OUT FOR VERCEL DEBUGGING << REMOVING COMMENT
-  initializeWebSocket(server); 
+  initializeWebSocket(server); // <<< KEEP ONLY THIS FOR NOW
+
+  /* COMMENTED OUT FOR VERCEL DEBUGGING
   console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 3
   initializeDiscordClient();
   scheduleTrialCheck(); // <<< RESTORED SCHEDULER
+  */
   /* COMMENTED OUT FOR VERCEL DEBUGGING << LEAVING COMMENT FOR NOW
   if (!process.env.NOCODB_BASE_URL || !process.env.NOCODB_USERS_TABLE_ID || !process.env.NOCODB_API_TOKEN || !process.env.JWT_SECRET) {
     console.warn('\n⚠️ WARNING: Essential environment variables (NocoDB/JWT) seem missing.');
