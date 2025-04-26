@@ -61,11 +61,12 @@ minimalServer.listen(PORT, () => {
 server.listen(PORT, () => { // <<< RESTORED ORIGINAL SERVER LISTEN
   console.log(`<<<<< EXPRESS SERVER LISTENING ON PORT ${PORT} >>>>>`); // <<< MODIFIED STARTUP LOG 2
 
-  /* COMMENTED OUT FOR VERCEL DEBUGGING
+  // /* COMMENTED OUT FOR VERCEL DEBUGGING << REMOVING COMMENT
   initializeWebSocket(server); 
-  console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 2
+  console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 3
   initializeDiscordClient();
-  
+  scheduleTrialCheck(); // <<< RESTORED SCHEDULER
+  /* COMMENTED OUT FOR VERCEL DEBUGGING << LEAVING COMMENT FOR NOW
   if (!process.env.NOCODB_BASE_URL || !process.env.NOCODB_USERS_TABLE_ID || !process.env.NOCODB_API_TOKEN || !process.env.JWT_SECRET) {
     console.warn('\n⚠️ WARNING: Essential environment variables (NocoDB/JWT) seem missing.');
     console.warn('Please ensure NOCODB_BASE_URL, NOCODB_USERS_TABLE_ID, NOCODB_API_TOKEN, and JWT_SECRET are set in your .env file.\n');
@@ -73,8 +74,6 @@ server.listen(PORT, () => { // <<< RESTORED ORIGINAL SERVER LISTEN
   if (!process.env.PAYPAL_WEBHOOK_ID) {
       console.warn('\n⚠️ WARNING: PAYPAL_WEBHOOK_ID environment variable is missing. Webhook verification will fail.\n');
   }
-
-  scheduleTrialCheck();
   */
 });
 
