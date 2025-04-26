@@ -260,7 +260,8 @@ const Settings = () => {
             if (response.data?.photoPath) { // Check for photoPath from backend
                 toast({ title: "Photo Uploaded", description: response.data.message || "Processing complete." });
                 // Instead of updating context directly, trigger a refetch of the signed URL
-                fetchAvatarUrl(); 
+                await fetchAvatarUrl(); // Ensure this completes before updating context
+                updateUserContext({}); // Force context update to trigger DashboardLayout refresh
                 // Note: We don't update the user context here with the path,
                 // as the display components rely solely on the fetched signed URL.
                 // The underlying user object in AuthContext still holds the old path until next login/refresh.
