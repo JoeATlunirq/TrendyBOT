@@ -1,3 +1,5 @@
+console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -41,6 +43,7 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   
   initializeWebSocket(server); 
+  console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 2
   initializeDiscordClient();
   
   if (!process.env.NOCODB_BASE_URL || !process.env.NOCODB_USERS_TABLE_ID || !process.env.NOCODB_API_TOKEN || !process.env.JWT_SECRET) {
