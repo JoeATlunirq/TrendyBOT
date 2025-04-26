@@ -7,7 +7,8 @@ const COLS = require('../config/nocodb_columns');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const { authenticator } = require('otplib');
-const { Storage } = require('@google-cloud/storage');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3'); // ADD S3 Client & GetObjectCommand
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // ADD S3 Presigner
 const path = require('path');
 
 // Destructure column names from environment variables
@@ -56,38 +57,36 @@ const defaultTemplates = {
     templateEmailPreview: "A new video is trending: {video_title}"
 };
 
-// --- Instantiate GCS Client --- 
-let storage;
-let gcsBucket;
+// --- Instantiate S3 Client ---
+let s3Client;
+const awsRegion = process.env.AWS_REGION;
+const s3BucketName = process.env.S3_BUCKET_NAME;
+const awsAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
+const awsSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
-// Read Base64 encoded credentials from environment variable
-const gcsCredentialsBase64 = process.env.GCS_CREDENTIALS_BASE64;
-const gcsBucketName = process.env.GCS_BUCKET_NAME;
-
-if (gcsCredentialsBase64 && gcsBucketName) {
+if (awsRegion && s3BucketName && awsAccessKeyId && awsSecretAccessKey) {
     try {
-        // Decode the Base64 string to get the JSON content
-        const credentialsJson = Buffer.from(gcsCredentialsBase64, 'base64').toString('utf8');
-        const credentials = JSON.parse(credentialsJson);
-        
-        storage = new Storage({ credentials }); // Pass credentials object directly
-        gcsBucket = storage.bucket(gcsBucketName);
-        console.log(`Google Cloud Storage client initialized for bucket: ${gcsBucketName} using Base64 credentials from ENV.`);
+        s3Client = new S3Client({
+            region: awsRegion,
+            credentials: {
+                accessKeyId: awsAccessKeyId,
+                secretAccessKey: awsSecretAccessKey,
+            },
+        });
+        console.log(`AWS S3 client initialized for bucket: ${s3BucketName} in region ${awsRegion}.`);
     } catch (error) {
-        console.error("FATAL ERROR: Failed to decode/parse GCS_CREDENTIALS_BASE64 or initialize Google Cloud Storage client.", error);
-        storage = null;
-        gcsBucket = null;
+        console.error("FATAL ERROR: Failed to initialize AWS S3 client.", error);
+        s3Client = null;
     }
 } else {
-    if (!gcsCredentialsBase64) {
-        console.warn("WARN: GCS_CREDENTIALS_BASE64 environment variable not set. GCS cannot authenticate.");
-    }
-    if (!gcsBucketName) {
-        console.warn("WARN: GCS_BUCKET_NAME environment variable not set. Target bucket unknown.");
-    }
-    console.warn("WARN: GCS client not initialized due to missing environment variables.");
-    storage = null;
-    gcsBucket = null;
+    const missing = [
+        !awsRegion && 'AWS_REGION',
+        !s3BucketName && 'S3_BUCKET_NAME',
+        !awsAccessKeyId && 'AWS_ACCESS_KEY_ID',
+        !awsSecretAccessKey && 'AWS_SECRET_ACCESS_KEY',
+    ].filter(Boolean).join(', ');
+    console.warn(`WARN: AWS S3 client not initialized due to missing environment variables: ${missing}.`);
+    s3Client = null;
 }
 
 // Log status immediately after initialization block
@@ -955,10 +954,13 @@ const updateProfilePhoto = async (req, res, next) => {
         return res.status(401).json({ message: 'Not authorized, user ID missing' });
     }
 
-    // Check if GCS is configured
-    if (!gcsBucket) {
-        console.error(`[updateProfilePhoto] GCS Bucket not configured for user ${userId}. Check GCS_BUCKET_NAME and credentials.`);
-        return next(new Error('Server configuration error: Cloud Storage is not set up.'));
+    // Check if S3 is configured
+    // if (!gcsBucket) { // Check S3 Client instead
+    if (!s3Client || !s3BucketName) {
+        // console.error(`[updateProfilePhoto] GCS Bucket not configured for user ${userId}. Check GCS_BUCKET_NAME and credentials.`);
+        console.error(`[updateProfilePhoto] S3 Client or Bucket Name not configured for user ${userId}. Check AWS env vars.`);
+        // return next(new Error('Server configuration error: Cloud Storage is not set up.'));
+        return next(new Error('Server configuration error: File Storage is not set up.'));
     }
 
     // Check if file was uploaded (req.file comes from multer memoryStorage)
@@ -987,11 +989,17 @@ const updateProfilePhoto = async (req, res, next) => {
         // --- END DETAILED LOGGING ---
 
         // Create a unique filename for GCS
-        const gcsFileName = `avatars/user-${userId}-${timestamp}${fileExtension}`;
-        const file = gcsBucket.file(gcsFileName);
+        // const gcsFileName = `avatars/user-${userId}-${timestamp}${fileExtension}`;
+        // const file = gcsBucket.file(gcsFileName);
+        // Create a unique key (path) for S3
+        const s3Key = `avatars/user-${userId}-${timestamp}${fileExtension}`;
 
-        console.log(`[updateProfilePhoto] Uploading ${gcsFileName} to bucket ${process.env.GCS_BUCKET_NAME}...`);
+
+        // console.log(`[updateProfilePhoto] Uploading ${gcsFileName} to bucket ${process.env.GCS_BUCKET_NAME}...`);
+        console.log(`[updateProfilePhoto] Uploading ${s3Key} to bucket ${s3BucketName}...`);
+
         // Upload the file buffer to GCS
+        /* REMOVE GCS UPLOAD
         await file.save(req.file.buffer, {
             metadata: {
                 contentType: req.file.mimetype,
@@ -999,23 +1007,37 @@ const updateProfilePhoto = async (req, res, next) => {
                 // cacheControl: 'public, max-age=31536000',
             },
             // Make the file publicly readable - REMOVED because bucket has Uniform access
-            // public: true, 
+            // public: true,
             // Explicitly set predefined ACL to publicRead - REMOVED due to Org Policy
             // predefinedAcl: 'publicRead',
         });
+        */
 
-        // --- SAVE OBJECT PATH, NOT PUBLIC URL ---
-        // Construct the object path
-        const objectPath = gcsFileName; // e.g., avatars/user-1-1745353625918.jpg
-        // Get the public URL (still useful for logging maybe, but don't save)
-        // const publicUrl = `https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`;
-        
-        console.log(`[updateProfilePhoto] File uploaded to GCS for user ${userId}. Path: ${objectPath}`);
+        // --- UPLOAD TO S3 ---
+        const command = new PutObjectCommand({
+            Bucket: s3BucketName,
+            Key: s3Key,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+            // Add ACL if your bucket is NOT blocking public ACLs and you WANT public reads
+            // ACL: 'public-read', // Or use bucket policy / CloudFront instead
+            // Optional: Add cache control for browsers
+            // CacheControl: 'public, max-age=31536000',
+        });
+        await s3Client.send(command);
+        // --- END UPLOAD TO S3 ---
+
+        // --- SAVE OBJECT PATH, NOT PUBLIC URL ---\n        // Construct the object path\n        // const objectPath = gcsFileName; // e.g., avatars/user-1-1745353625918.jpg
+        // Construct the S3 object key (which is the path)
+        const objectPath = s3Key;
+        // Get the public URL (still useful for logging maybe, but don't save)\n        // const publicUrl = `https://storage.googleapis.com/${process.env.GCS_BUCKET_NAME}/${gcsFileName}`;\n
+        // console.log(`[updateProfilePhoto] File uploaded to GCS for user ${userId}. Path: ${objectPath}`);
+        console.log(`[updateProfilePhoto] File uploaded to S3 for user ${userId}. Key: ${objectPath}`);
 
         // Prepare data for NocoDB update - SAVE THE PATH
         const photoUrlColumn = NOCODB_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
         const dataToUpdate = {
-            [photoUrlColumn]: objectPath // Save the GCS object path
+            [photoUrlColumn]: objectPath // Save the S3 object key
         };
         // console.log(`[updateProfilePhoto Debug] Data to update NocoDB:`, dataToUpdate);
 
@@ -1299,8 +1321,11 @@ const getAvatarSignedUrl = async (req, res, next) => {
     }
 
     // Check if GCS client is ready
-    if (!gcsBucket) {
-        console.error(`[getAvatarSignedUrl] GCS Bucket not configured for user ${userId}.`);
+    // if (!gcsBucket) {
+    // Check if S3 client is ready
+    if (!s3Client || !s3BucketName) {
+        // console.error(`[getAvatarSignedUrl] GCS Bucket not configured for user ${userId}.`);
+        console.error(`[getAvatarSignedUrl] S3 Client or Bucket Name not configured for user ${userId}.`);
         // Return a generic error or potentially a fallback URL
         return res.status(503).json({ message: 'Storage service unavailable.', signedUrl: null });
     }
@@ -1319,8 +1344,11 @@ const getAvatarSignedUrl = async (req, res, next) => {
             return res.status(200).json({ signedUrl: null }); // Indicate no specific avatar
         }
 
-        console.log(`[getAvatarSignedUrl] Generating signed URL for user ${userId}, path: ${objectPath}`);
+        // console.log(`[getAvatarSignedUrl] Generating signed URL for user ${userId}, path: ${objectPath}`);
+        console.log(`[getAvatarSignedUrl] Generating S3 signed URL for user ${userId}, key: ${objectPath}`);
 
+        // --- REMOVE GCS SIGNED URL GENERATION ---
+        /*
         // Generate the signed URL
         const options = {
             version: 'v4', // Recommended version
@@ -1329,6 +1357,18 @@ const getAvatarSignedUrl = async (req, res, next) => {
         };
 
         const [signedUrl] = await gcsBucket.file(objectPath).getSignedUrl(options);
+        */
+        // --- END REMOVE GCS SIGNED URL GENERATION ---
+
+        // --- GENERATE S3 PRESIGNED URL ---
+        const command = new GetObjectCommand({ // Use GetObjectCommand for reading
+             Bucket: s3BucketName,
+             Key: objectPath,
+        });
+        const signedUrl = await getSignedUrl(s3Client, command, {
+             expiresIn: 15 * 60, // Expires in 15 minutes (900 seconds)
+        });
+        // --- END GENERATE S3 PRESIGNED URL ---
 
         console.log(`[getAvatarSignedUrl] Generated URL for user ${userId}: ${signedUrl.substring(0, 100)}...`); // Log start of URL
 
