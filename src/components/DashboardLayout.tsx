@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,14 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/use-mobile";
 import logoImage from '@/assets/images/TXT with \'Pro\' (1).svg';
+import axios from 'axios';
 
 // Constants from Settings page (or move to a shared config)
 const PROFILE_PHOTO_URL_COLUMN = import.meta.env.VITE_PROFILE_PHOTO_URL_COLUMN || 'profile_photo_url';
 const NAME_COLUMN = import.meta.env.VITE_NAME_COLUMN || 'Names';
 const EMAIL_COLUMN = import.meta.env.VITE_EMAIL_COLUMN || 'Emails';
 const BACKEND_API_BASE_URL = (import.meta.env.PROD ? '/api' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api'));
+const API_BASE_URL = BACKEND_API_BASE_URL;
 
 interface NavItemProps {
   icon: React.ReactNode;
@@ -55,29 +57,61 @@ const NavItem: React.FC<NavItemProps> = ({ icon, label, to, active, onClick }) =
 };
 
 export const DashboardLayout: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [avatarSignedUrl, setAvatarSignedUrl] = useState<string | null>(null);
+  const [isFetchingAvatarUrl, setIsFetchingAvatarUrl] = useState(false);
 
   // Function to generate fallback avatar URL
   const generateFallbackAvatar = (name: string | undefined, email: string | undefined) => {
       return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || email || 'U')}&background=404040&color=e5e5e5&bold=true`;
   };
 
-  // Function to get the final avatar src (absolute URL or fallback)
+  // --- Fetch Signed URL --- 
+  useEffect(() => {
+    const fetchUrl = async () => {
+      if (!token) {
+        setAvatarSignedUrl(null); // No token, no avatar
+        return;
+      }
+      setIsFetchingAvatarUrl(true);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/users/avatar-url`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.data?.signedUrl) {
+          setAvatarSignedUrl(response.data.signedUrl);
+        } else {
+          setAvatarSignedUrl(null); // No path stored or error generating URL
+        }
+      } catch (error) {
+        console.error("Error fetching avatar signed URL:", error);
+        setAvatarSignedUrl(null); // Set to null on error
+      } finally {
+        setIsFetchingAvatarUrl(false);
+      }
+    };
+
+    fetchUrl();
+    // Re-fetch if user or token changes (e.g., after photo upload updates user context, though path won't be there yet)
+    // Re-fetch primarily needed on login/initial load.
+  }, [user, token]); // Dependency array
+
+  // Function to get the final avatar src (now uses state or fallback)
   const getAvatarSrc = () => {
       const profileName = user?.[NAME_COLUMN];
-      const storedUrl = user?.[PROFILE_PHOTO_URL_COLUMN];
+      const userEmail = user?.[EMAIL_COLUMN];
 
-      // Check if the stored URL is a valid absolute URL (starts with http/https)
-      if (storedUrl && typeof storedUrl === 'string' && (storedUrl.startsWith('http://') || storedUrl.startsWith('https://'))) {
-          return storedUrl; // Use the full URL directly from GCS or previous uploads
+      // Use fetched signed URL if available
+      if (avatarSignedUrl) {
+          return avatarSignedUrl;
       }
 
-      // If not a valid URL or not present, generate fallback
-      return generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
+      // If fetching, or no signed URL, use fallback
+      return generateFallbackAvatar(profileName, userEmail);
   };
 
   const avatarSrc = getAvatarSrc(); // Calculate once per render
