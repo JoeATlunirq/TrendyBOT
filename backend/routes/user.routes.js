@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer'); // Import multer
 const path = require('path'); // Import path for filename generation
-const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, sendTelegramVerificationCode, verifyTelegramCode, disconnectTelegram, updateProfilePhoto, changePassword, setup2FA, verify2FA, disable2FA, deleteAccount, getAvatarSignedUrl } = require('../controllers/user.controller');
+const { updateUserPreferences, updateProfile, updateNotificationSettings, getAlertPreferences, updateAlertPreferences, getAlertTemplates, updateAlertTemplates, getNotificationSettings, sendTestNotification, sendTelegramVerificationCode, verifyTelegramCode, disconnectTelegram, updateProfilePhoto, changePassword, setup2FA, verify2FA, disable2FA, deleteAccount, getAvatarSignedUrl, sendEmailVerificationCode, verifyEmailCode, disconnectEmail, sendDiscordVerificationCode, verifyDiscordCode, disconnectDiscord } = require('../controllers/user.controller');
 const { protect } = require('../middleware/auth.middleware'); // Import the protect middleware
 
 const router = express.Router();
@@ -104,6 +104,38 @@ router.post('/telegram/verify-code', protect, verifyTelegramCode);
 // @desc    Disconnect the linked Telegram account
 // @access  Private
 router.post('/telegram/disconnect', protect, disconnectTelegram);
+
+// Email Verification routes
+// @route   POST /api/users/email/send-code
+// @desc    Send a verification code to the provided email
+// @access  Private
+router.post('/email/send-code', protect, sendEmailVerificationCode);
+
+// @route   POST /api/users/email/verify-code
+// @desc    Verify the submitted email code
+// @access  Private
+router.post('/email/verify-code', protect, verifyEmailCode);
+
+// @route   POST /api/users/email/disconnect
+// @desc    Disconnect the linked email account
+// @access  Private
+router.post('/email/disconnect', protect, disconnectEmail);
+
+// Discord Verification routes
+// @route   POST /api/users/discord/send-code
+// @desc    Send a verification code to the provided Discord server
+// @access  Private
+router.post('/discord/send-code', protect, sendDiscordVerificationCode);
+
+// @route   POST /api/users/discord/verify-code
+// @desc    Verify the submitted Discord code and link the account
+// @access  Private
+router.post('/discord/verify-code', protect, verifyDiscordCode);
+
+// @route   POST /api/users/discord/disconnect
+// @desc    Disconnect the linked Discord account
+// @access  Private
+router.post('/discord/disconnect', protect, disconnectDiscord);
 
 // Alert Preferences routes
 // @route   GET /api/users/alert-preferences

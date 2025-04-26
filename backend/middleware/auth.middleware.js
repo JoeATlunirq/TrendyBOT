@@ -22,25 +22,27 @@ const protect = async (req, res, next) => {
       // Get user ID from token payload (should be { userId: ..., ... } now)
       const userId = decoded.userId;
       if (!userId) {
-        // This specific error is helpful for debugging
-        throw new Error('Token payload missing user ID');
+        console.error('Token verification failed: Token payload missing user ID');
+        // Send response and return to prevent further execution
+        return res.status(401).json({ message: 'Not authorized, invalid token payload' });
       }
 
       // Attach user ID to the request object for later use
       // Note: We don't fetch the full user details here to keep middleware fast.
       // Controllers can fetch details if needed using the ID.
       req.userId = userId; 
-      next(); // Proceed to the next middleware or route handler
+      return next(); // Explicitly return after calling next()
       
     } catch (error) {
-      console.error('Token verification failed:', error);
-      res.status(401).json({ message: 'Not authorized, token failed' });
+      console.error('Token verification failed:', error.message); // Log specific error message
+      // Send response and return 
+      return res.status(401).json({ message: 'Not authorized, token failed' }); 
     }
   } 
 
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
-  }
+  // If we reach here, it means no valid Bearer token was found in the header
+  console.log('Authorization header missing or not Bearer token');
+  return res.status(401).json({ message: 'Not authorized, no token' }); 
 };
 
 module.exports = { protect }; 

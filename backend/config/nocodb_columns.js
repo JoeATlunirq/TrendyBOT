@@ -48,4 +48,12 @@ module.exports = {
     PASSWORD_RESET_TOKEN: process.env.NOCODB_PASSWORD_RESET_TOKEN_COLUMN || 'password_reset_token',
     PASSWORD_RESET_EXPIRES: process.env.NOCODB_PASSWORD_RESET_EXPIRES_COLUMN || 'password_reset_expires',
     // --------------------------------
+
+    // Add New Verification Columns
+    EMAIL_VERIFICATION_CODE: process.env.NOCODB_EMAIL_VERIFICATION_CODE_COLUMN || 'email_verification_code',
+    EMAIL_CODE_EXPIRY: process.env.NOCODB_EMAIL_CODE_EXPIRY_COLUMN || 'email_code_expiry',
+    EMAIL_VERIFIED: process.env.NOCODB_EMAIL_VERIFIED_COLUMN || 'email_verified',
+    DISCORD_VERIFICATION_CODE: process.env.NOCODB_DISCORD_VERIFICATION_CODE_COLUMN || 'discord_verification_code',
+    DISCORD_CODE_EXPIRY: process.env.NOCODB_DISCORD_CODE_EXPIRY_COLUMN || 'discord_code_expiry',
+    DISCORD_VERIFIED: process.env.NOCODB_DISCORD_VERIFIED_COLUMN || 'discord_verified',
 }; 

@@ -2,7 +2,8 @@ const NocoDBService = require('../services/nocodb.service');
 const SubscriptionLogicService = require('../services/subscriptionLogic.service');
 const TelegramBot = require('node-telegram-bot-api');
 const crypto = require('crypto');
-const { sendToUser } = require('../server');
+const { sendToUser } = require('../services/websocket.service');
+const { sendDiscordDM } = require('../services/discord.service');
 const COLS = require('../config/nocodb_columns');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
@@ -10,6 +11,8 @@ const { authenticator } = require('otplib');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3'); // ADD S3 Client & GetObjectCommand
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // ADD S3 Presigner
 const path = require('path');
+const axios = require('axios');
+const { sendEmail } = require('../services/email.service');
 
 // Destructure column names from environment variables
 const { 
@@ -234,41 +237,93 @@ const updateNotificationSettings = async (req, res, next) => {
   if (!userId) {
     return res.status(401).json({ message: 'Not authorized, user ID missing' });
   }
+  
+  // ADD LOG HERE
+  console.log(`[updateNotificationSettings] Received request body:`, req.body);
 
-  // Extract expected fields from request body
   const { 
-      // telegramChatId, // REMOVED - Should only be set via verification
-      discordWebhookUrl, 
+      notificationEmail,
+      discordUserId, // ADD: Expect discordUserId now
       deliveryPreference, 
-      // alertTemplates // If handling templates here
   } = req.body;
 
-  // Prepare data object with correct column names from .env
   const dataToUpdate = {};
-  // if (telegramChatId !== undefined) { // REMOVED
-  //     dataToUpdate[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] = telegramChatId;
-  // }
-  if (discordWebhookUrl !== undefined) {
-      dataToUpdate[NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url'] = discordWebhookUrl;
+  let emailChanged = false;
+  let discordIdChanged = false; // ADD flag for discord change
+
+  // Check if the notification email is being updated
+  if (notificationEmail !== undefined) {
+      dataToUpdate[COLS.NOTIF_EMAIL] = notificationEmail; // Use COLS constant
+      // If email is changed, mark as unverified
+      // Fetch current record to compare ONLY if email is in request
+      try {
+          const currentUserRecord = await NocoDBService.getUserRecordById(userId);
+          if (currentUserRecord[COLS.NOTIF_EMAIL] !== notificationEmail) {
+              dataToUpdate[COLS.EMAIL_VERIFIED] = false; // Reset verification status
+              emailChanged = true; // Flag that email changed
+              console.log(`Notification email changed for user ${userId}. Marked as unverified.`);
+          }
+      } catch (fetchError) {
+          console.error(`[updateNotificationSettings] Error fetching user ${userId} to check email change:`, fetchError);
+          // Proceed without resetting verification, or handle error differently?
+          // Let's proceed cautiously and not reset if fetch fails
+      }
   }
-   if (deliveryPreference !== undefined) {
-      dataToUpdate[NOCODB_DELIVERY_PREF_COLUMN || 'delivery_preference'] = deliveryPreference;
+
+  // MODIFIED: Handle discordUserId instead of discordWebhookUrl
+  if (discordUserId !== undefined) {
+      dataToUpdate[COLS.DISCORD_USER_ID] = discordUserId; // Use COLS constant
+      // If discordUserId changes, mark as unverified
+      try {
+          const currentUserRecord = await NocoDBService.getUserRecordById(userId);
+          if (currentUserRecord[COLS.DISCORD_USER_ID] !== discordUserId) {
+              dataToUpdate[COLS.DISCORD_VERIFIED] = false; // Reset verification status
+              discordIdChanged = true; // Flag that ID changed
+              console.log(`Discord User ID changed for user ${userId}. Marked as unverified.`);
+          }
+      } catch (fetchError) {
+          console.error(`[updateNotificationSettings] Error fetching user ${userId} to check Discord ID change:`, fetchError);
+      }
   }
-  // Add template fields if handling them here
+
+  if (deliveryPreference !== undefined) {
+      dataToUpdate[COLS.DELIVERY_PREF] = deliveryPreference; 
+  }
   
   try {
     if (Object.keys(dataToUpdate).length === 0) {
        return res.status(200).json({ message: 'No notification settings provided to update.' });
     }
 
+    // ADD LOG: Log the exact data being sent to NocoDB update
+    console.log(`[updateNotificationSettings] Calling NocoDBService.updateUser with data:`, dataToUpdate);
+
     const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
+
+    // Send WebSocket notification if email or discord changed
+    if ((emailChanged || discordIdChanged) && sendToUser) {
+        if (emailChanged) {
+             try {
+                 await sendToUser(userId.toString(), { type: 'emailStatusUpdate', payload: { verified: false } });
+             } catch(wsError) {
+                  console.error(`[updateNotificationSettings] Error sending emailStatusUpdate WS notification for user ${userId}:`, wsError);
+             }
+        }
+         if (discordIdChanged) {
+             try {
+                 await sendToUser(userId.toString(), { type: 'discordStatusUpdate', payload: { verified: false } });
+             } catch(wsError) {
+                  console.error(`[updateNotificationSettings] Error sending discordStatusUpdate WS notification for user ${userId}:`, wsError);
+             }
+         }
+    }
 
     const passwordColumn = process.env.NOCODB_PASSWORD_COLUMN || 'password';
     const { [passwordColumn]: _, ...userWithoutPassword } = updatedUser;
 
     res.status(200).json({
       message: 'Notification settings updated successfully',
-      user: userWithoutPassword, // Send back updated user info
+      user: userWithoutPassword, 
     });
 
   } catch (error) {
@@ -293,17 +348,13 @@ const getNotificationSettings = async (req, res, next) => {
             return res.status(404).json({ message: 'User not found' });
         }
         
-        // Extract only notification-related fields
         const notificationSettings = {
-            [NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']: userRecord[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] ?? '',
-            [NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url']: userRecord[NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url'] ?? '',
-            [NOCODB_DELIVERY_PREF_COLUMN || 'delivery_preference']: userRecord[NOCODB_DELIVERY_PREF_COLUMN || 'delivery_preference'] ?? 'Instantly',
-            // Add connection status flags if you implemented them in NocoDB
-            // [NOCODB_IS_TELEGRAM_CONNECTED_COLUMN || 'is_telegram_connected']: userRecord[NOCODB_IS_TELEGRAM_CONNECTED_COLUMN || 'is_telegram_connected'] ?? false,
-            // [NOCODB_IS_DISCORD_CONNECTED_COLUMN || 'is_discord_connected']: userRecord[NOCODB_IS_DISCORD_CONNECTED_COLUMN || 'is_discord_connected'] ?? false,
-            // Add new fields needed by frontend
-            [COLS.TELEGRAM_ACCESS_CODE]: userRecord[COLS.TELEGRAM_ACCESS_CODE] ?? null, 
-            [COLS.IS_TELEGRAM_CODE_VALID]: userRecord[COLS.IS_TELEGRAM_CODE_VALID] ?? false, 
+            telegramChatId: userRecord[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] ?? null,
+            discordUserId: userRecord[COLS.DISCORD_USER_ID] ?? null, 
+            deliveryPreference: userRecord[COLS.DELIVERY_PREF] ?? 'Instantly',
+            emailVerified: userRecord[COLS.EMAIL_VERIFIED] ?? false,
+            telegramVerified: userRecord[NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified'] ?? false,
+            discordVerified: userRecord[COLS.DISCORD_VERIFIED] ?? false,
         };
         res.status(200).json(notificationSettings);
 
@@ -654,41 +705,37 @@ const sendTestNotification = async (req, res, next) => {
         // successMessage = `Test message simulated for Telegram Chat ID: ${chatId}. Check server console.`;
 
     } else if (channelType === 'discord') {
-        const webhookUrl = userRecord[NOCODB_DISCORD_WEBHOOK_COLUMN || 'discord_webhook_url'];
+        // MODIFIED: Use discordUserId and sendDiscordDM
+        const discordUserId = userRecord[COLS.DISCORD_USER_ID];
+        const discordVerified = userRecord[COLS.DISCORD_VERIFIED];
         const template = userRecord[NOCODB_TEMPLATE_DISCORD_COLUMN || 'alert_template_discord'] || defaultTemplates.templateDiscord;
 
-        if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
-            return res.status(400).json({ message: 'Valid Discord Webhook URL not configured.' });
+        if (!discordUserId || !discordVerified) { // Check for ID and verified status
+            return res.status(400).json({ message: 'Discord User ID not configured or not verified.' });
         }
 
         const messageToSend = formatMessage(template, sampleData);
+        const dmSent = await sendDiscordDM(discordUserId, messageToSend);
 
-        // --- ACTUAL DISCORD SENDING LOGIC --- 
-        // Requires an HTTP client like 'axios' (already likely installed)
-        // try {
-        //     await axios.post(webhookUrl, { content: messageToSend });
-        //     successMessage = `Test message sent to Discord Webhook.`; 
-        // } catch (sendError) {
-        //     console.error('Discord send error:', sendError.response?.data || sendError.message);
-        //     return res.status(500).json({ message: `Failed to send test message to Discord: ${sendError.response?.data?.message || sendError.message}` });
-        // }
-        // --- END OF DISCORD SENDING --- 
-
-        // Placeholder success for now
-        console.log(`--- SIMULATING Discord Send --- 
-To Webhook: ${webhookUrl}
-Message: ${messageToSend}
----`);
-        successMessage = `Test message simulated for Discord Webhook. Check server console.`;
+        if (dmSent) {
+             successMessage = `Test message sent to your Discord DMs (User ID: ${discordUserId}).`;
+        } else {
+             return res.status(500).json({ message: 'Failed to send test message to Discord DM. Bot might be blocked or DMs disabled.' });
+        }
 
     } else if (channelType === 'email') {
-        const userEmail = userRecord[process.env.NOCODB_EMAIL_COLUMN || 'email'];
+        // MODIFIED: Prioritize notification email, fallback to primary
+        const notificationEmail = userRecord[COLS.NOTIF_EMAIL];
+        const primaryEmail = userRecord[COLS.EMAIL]; 
+        const emailToSendTo = notificationEmail || primaryEmail;
+
         const subjectTemplate = userRecord[NOCODB_TEMPLATE_EMAIL_SUBJECT_COLUMN || 'alert_template_email_subject'] || defaultTemplates.templateEmailSubject;
         // Note: Email preview text is less relevant for test, body needs formatting
         // const previewTemplate = userRecord[NOCODB_TEMPLATE_EMAIL_PREVIEW_COLUMN || 'alert_template_email_preview'] || defaultTemplates.templateEmailPreview;
 
-        if (!userEmail) {
-            return res.status(400).json({ message: 'User email address not found.' });
+        // Check if an email exists to send to
+        if (!emailToSendTo) {
+            return res.status(400).json({ message: 'Notification email not configured and primary email missing.' });
         }
         
         const subject = formatMessage(subjectTemplate, sampleData);
@@ -704,32 +751,30 @@ Message: ${messageToSend}
         `;
 
         // --- ACTUAL EMAIL SENDING LOGIC --- 
-        // Requires installing 'nodemailer' and configuring transport (SMTP, SendGrid, etc.)
-        // Needs environment variables for service credentials (e.g., SENDGRID_API_KEY)
-        // const nodemailer = require('nodemailer');
-        // const transporter = nodemailer.createTransport({ /* ... configuration based on service ... */ });
-        // try {
-        //     await transporter.sendMail({
-        //         from: process.env.EMAIL_FROM_ADDRESS, // Configure in .env
-        //         to: userEmail,
-        //         subject: subject,
-        //         html: body,
-        //         // text: optional plain text version
-        //     });
-        //     successMessage = `Test email sent to ${userEmail}.`;
-        // } catch (sendError) {
-        //     console.error('Email send error:', sendError);
-        //     return res.status(500).json({ message: `Failed to send test email: ${sendError.message}` });
-        // }
+        // Requires configuration in email.service.js
+        try {
+            await sendEmail({
+                 to: emailToSendTo, // Use the determined email address
+                 subject: subject,
+                 html: body,
+                 text: `Test Trend Alert: ${sampleData.video_title}` // Simple text fallback
+            });
+            successMessage = `Test email sent to ${emailToSendTo}.`;
+        } catch (sendError) {
+            console.error('Email send error:', sendError);
+            return res.status(500).json({ message: `Failed to send test email: ${sendError.message}` });
+        }
         // --- END OF EMAIL SENDING --- 
 
-        // Placeholder success for now
+        // Placeholder success for now - REMOVED as we now attempt actual sending
+        /*
         console.log(`--- SIMULATING Email Send --- 
-To: ${userEmail}
+To: ${emailToSendTo} // Updated to show correct target
 Subject: ${subject}
 Body: ${body}
 ---`);
-        successMessage = `Test message simulated for Email (${userEmail}). Check server console.`;
+        successMessage = `Test message simulated for Email (${emailToSendTo}). Check server console.`;
+        */
     }
 
     res.status(200).json({ message: successMessage });
@@ -752,7 +797,9 @@ const sendTelegramVerificationCode = async (req, res, next) => {
   }
 
   const { chatId } = req.body;
+  console.log(`[sendTelegramVerificationCode] Received chatId: >>>${chatId}<<< Type: ${typeof chatId}`); // <-- ADD THIS LOG
   if (!chatId || typeof chatId !== 'string' || !/^-?\d+$/.test(chatId)) {
+    console.error(`[sendTelegramVerificationCode] Invalid chatId format received: ${chatId}`); // <-- ADD ERROR LOG
     return res.status(400).json({ message: 'Valid Telegram Chat ID is required.' });
   }
 
@@ -771,7 +818,7 @@ const sendTelegramVerificationCode = async (req, res, next) => {
     // 2. Store Code and Expiry in NocoDB
     const dataToUpdate = {
       [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: verificationCode,
-      [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: expiryDate.toISOString(),
+      [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_verification_code_expire']: expiryDate.toISOString(),
       // Store the attempted chat ID temporarily or permanently?
       // Let's store it permanently here, assuming user intends to use this ID.
       // If verification fails, they can try again with a different ID.
@@ -827,21 +874,25 @@ const verifyTelegramCode = async (req, res, next) => {
         }
 
         const storedCode = userRecord[NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code'];
-        const expiryString = userRecord[NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry'];
-        const storedChatId = userRecord[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']; // Get stored chat ID
+        const expiryString = userRecord[NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_verification_code_expire'];
+        // --- FIX: Use consistent column name logic --- 
+        const storedChatId = userRecord[process.env.NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']; 
 
+        // Check if code, expiry, AND chatId were successfully stored before proceeding
         if (!storedCode || !expiryString || !storedChatId) {
+             console.error(`[verifyTelegramCode] Missing verification data for user ${userId}. Code: ${!!storedCode}, Expiry: ${!!expiryString}, ChatID: ${!!storedChatId}`);
              return res.status(400).json({ message: 'Verification process not initiated or chat ID missing. Please request a code first.' });
         }
 
         // 2. Check Expiry
         const expiryDate = new Date(expiryString);
         if (isNaN(expiryDate.getTime()) || expiryDate < new Date()) {
-            // Optionally clear the expired code here
-            // await NocoDBService.updateUser(userId, { 
-            //     [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: null,
-            //     [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: null
-            // });
+            // --- IMPROVEMENT: Always clear expired code --- 
+            await NocoDBService.updateUser(userId, { 
+                [NOCODB_TELEGRAM_CODE_COLUMN]: null,
+                [NOCODB_TELEGRAM_EXPIRY_COLUMN]: null
+            });
+             console.log(`Cleared expired telegram verification code for user ${userId}.`);
             return res.status(400).json({ message: 'Verification code has expired. Please request a new one.' });
         }
 
@@ -854,7 +905,7 @@ const verifyTelegramCode = async (req, res, next) => {
         const dataToUpdate = {
             [NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified']: true,
             [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: null, // Clear code
-            [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: null,   // Clear expiry
+            [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_verification_code_expire']: null,   // Clear expiry
              // Keep storedChatId as it's now verified
         };
         await NocoDBService.updateUser(userId, dataToUpdate);
@@ -875,13 +926,26 @@ const verifyTelegramCode = async (req, res, next) => {
         }
 
          // 6. Notify Frontend via WebSocket
-         sendToUser(userId, { 
-             type: 'telegramStatusUpdate', 
-             payload: { 
-                 verified: true, 
-                 chatId: storedChatId 
-             }
-         });
+         if (sendToUser) { // Check if sendToUser was imported correctly
+            try {
+                const notified = sendToUser(userId.toString(), { // Use sendToUser directly
+                    type: 'telegramStatusUpdate', 
+                    payload: { 
+                        verified: true, 
+                        chatId: storedChatId 
+                    }
+                });
+                if (notified) {
+                    console.log(`[verifyTelegramCode] WebSocket notification sent to user ${userId}.`);
+                } else {
+                    console.warn(`[verifyTelegramCode] User ${userId} not found for WebSocket notification.`);
+                }
+            } catch (wsError) {
+                 console.error(`[verifyTelegramCode] Error sending WebSocket notification for user ${userId}:`, wsError);
+            }
+         } else {
+             console.error('[verifyTelegramCode] sendToUser function is not available from websocket.service.js');
+         }
 
         res.status(200).json({ 
             message: 'Telegram account connected successfully.', 
@@ -906,36 +970,38 @@ const disconnectTelegram = async (req, res, next) => {
     }
 
     try {
-        // Define column names using env variables or defaults
-        const chatIdCol = NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id';
-        const verifiedCol = NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified';
-        const codeCol = NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code';
-        const expiryCol = NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry';
+        // Fetch current user data to potentially notify them
+        // FIX: Use getUserRecordById instead of getUserById
+        const user = await NocoDBService.getUserRecordById(userId);
+        const chatId = user[NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'];
 
-        // Prepare data to clear Telegram connection info
+        // Prepare data for update
         const dataToUpdate = {
-            [chatIdCol]: null,
-            [verifiedCol]: false,
-            [codeCol]: null,
-            [expiryCol]: null
+            [NOCODB_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id']: null,
+            [NOCODB_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified']: false,
+            [NOCODB_TELEGRAM_CODE_COLUMN || 'telegram_verification_code']: null,
+            [NOCODB_TELEGRAM_EXPIRY_COLUMN || 'telegram_code_expiry']: null,
         };
 
-        // Update the user record in NocoDB
-        await NocoDBService.updateUser(userId, dataToUpdate);
-        console.log(`Cleared Telegram connection info for user ${userId}.`);
+        // Update user record in NocoDB
+        const updatedUser = await NocoDBService.updateUser(userId, dataToUpdate);
 
-        // Notify Frontend via WebSocket
-        sendToUser(userId, { 
-            type: 'telegramStatusUpdate', 
-            payload: { 
-                verified: false, 
-                chatId: null 
-            }
-        });
+        // Notify the user via WebSocket AFTER successful update
+        if (sendToUser) {
+             try { 
+                await sendToUser(userId.toString(), { // Use sendToUser directly
+                    type: 'NOTIFICATION',
+                    payload: {
+                        message: 'Telegram account disconnected successfully.',
+                        status: 'success'
+                    }
+                });
+             } catch (wsError) { 
+                 console.error(`[disconnectTelegram] Error sending WebSocket notification for user ${userId}:`, wsError);
+             }
+        } 
 
-        res.status(200).json({ 
-            message: 'Telegram account disconnected successfully.', 
-        });
+        res.status(200).json({ message: 'Telegram account disconnected successfully.' });
 
     } catch (error) {
         console.error(`Error disconnecting Telegram for user ${userId}:`, error);
@@ -1382,6 +1448,322 @@ const getAvatarSignedUrl = async (req, res, next) => {
     }
 };
 
+// --- Verification Code Generation Helper ---
+const generateVerificationCode = (length = 6) => {
+    return crypto.randomInt(10**(length-1), (10**length)-1).toString();
+};
+
+// --- Send Email Verification Code ---
+const sendEmailVerificationCode = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        // MODIFIED: Prioritize notification email, fallback to primary
+        const notificationEmail = userRecord[COLS.NOTIF_EMAIL];
+        const primaryEmail = userRecord[COLS.EMAIL];
+        const emailToSendTo = notificationEmail || primaryEmail; // Use notification email if set, else primary
+        
+        if (!emailToSendTo) {
+             return res.status(400).json({ message: 'Notification email address not set and primary email missing.' });
+        }
+
+        const verificationCode = generateVerificationCode();
+        const expiryMinutes = 10;
+        const expiryDate = new Date(Date.now() + expiryMinutes * 60000);
+
+        const dataToUpdate = {
+            [COLS.EMAIL_VERIFICATION_CODE]: verificationCode,
+            [COLS.EMAIL_CODE_EXPIRY]: expiryDate.toISOString(),
+            // DO NOT set verified to false here, only when email is changed or disconnected
+            // [COLS.EMAIL_VERIFIED]: false 
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Stored email verification code for user ${userId}.`);
+
+        // Send the email to the chosen address
+        const subject = `Your Trendy Bot Verification Code: ${verificationCode}`;
+        const textBody = `Your Trendy Bot verification code is: ${verificationCode}\n\nThis code will expire in ${expiryMinutes} minutes.`;
+        const htmlBody = `<p>Your Trendy Bot verification code is: <strong>${verificationCode}</strong></p><p>This code will expire in ${expiryMinutes} minutes.</p>`;
+        
+        await sendEmail({ to: emailToSendTo, subject, text: textBody, html: htmlBody });
+        console.log(`Sent verification code to email ${emailToSendTo} for user ${userId}.`);
+
+        res.status(200).json({ message: `Verification code sent to ${emailToSendTo}. Please check your inbox (and spam folder).` });
+
+    } catch (error) {
+        console.error(`Error sending email verification code for user ${userId}:`, error);
+        next(new Error('Failed to send email verification code.'));
+    }
+};
+
+// --- Verify Email Code ---
+const verifyEmailCode = async (req, res, next) => {
+    const userId = req.userId;
+    const { verificationCode } = req.body;
+
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+    if (!verificationCode || typeof verificationCode !== 'string' || !/\d{6}/.test(verificationCode)) {
+        return res.status(400).json({ message: 'Invalid verification code format. Expected 6 digits.' });
+    }
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) return res.status(404).json({ message: 'User not found' });
+
+        const storedCode = userRecord[COLS.EMAIL_VERIFICATION_CODE];
+        const expiryString = userRecord[COLS.EMAIL_CODE_EXPIRY];
+        const userEmail = userRecord[COLS.EMAIL]; // Get email for confirmation
+
+        if (!storedCode || !expiryString) {
+            return res.status(400).json({ message: 'Verification process not initiated. Please request a code first.' });
+        }
+
+        const expiryDate = new Date(expiryString);
+        if (isNaN(expiryDate.getTime()) || expiryDate < new Date()) {
+            // --- IMPROVEMENT: Always clear expired code --- 
+            await NocoDBService.updateUser(userId, {
+                [COLS.EMAIL_VERIFICATION_CODE]: null,
+                [COLS.EMAIL_CODE_EXPIRY]: null
+            });
+            console.log(`Cleared expired email verification code for user ${userId}.`);
+            return res.status(400).json({ message: 'Verification code has expired. Please request a new one.' });
+        }
+
+        if (verificationCode !== storedCode) {
+            return res.status(400).json({ message: 'Invalid verification code.' });
+        }
+
+        // Verification successful
+        const dataToUpdate = {
+            [COLS.EMAIL_VERIFIED]: true,
+            // --- IMPROVEMENT: Always clear used code on success --- 
+            [COLS.EMAIL_VERIFICATION_CODE]: null,
+            [COLS.EMAIL_CODE_EXPIRY]: null,
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Email verification successful for user ${userId}.`);
+
+        // --- IMPROVEMENT: Send confirmation email --- 
+        if (userEmail) {
+            try {
+                 await sendEmail({
+                    to: userEmail,
+                    subject: '✅ Email Verified Successfully with Trendy Bot',
+                    text: 'Your email address has been successfully verified and connected for Trendy Bot notifications.',
+                    html: '<p>✅ Your email address has been successfully verified and connected for Trendy Bot notifications.</p>'
+                 });
+                 console.log(`Sent email verification confirmation to ${userEmail} for user ${userId}.`);
+            } catch (emailError) {
+                 console.error(`Failed to send email confirmation for user ${userId}:`, emailError);
+                 // Don't fail the main request if confirmation email fails
+            }
+        }
+
+        res.status(200).json({ message: 'Email address verified successfully.' });
+
+    } catch (error) {
+        console.error(`Error verifying email code for user ${userId}:`, error);
+        next(new Error('Failed to verify email code due to a server error.'));
+    }
+};
+
+// --- Send Discord Verification Code ---
+const sendDiscordVerificationCode = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) return res.status(404).json({ message: 'User not found' });
+
+        // MODIFIED: Get Discord User ID instead of webhook
+        const discordUserId = userRecord[COLS.DISCORD_USER_ID]; 
+        if (!discordUserId) {
+            return res.status(400).json({ message: 'Discord User ID is not configured for this account.' });
+        }
+
+        const verificationCode = generateVerificationCode();
+        const expiryMinutes = 10;
+        const expiryDate = new Date(Date.now() + expiryMinutes * 60000);
+
+        const dataToUpdate = {
+            [COLS.DISCORD_VERIFICATION_CODE]: verificationCode,
+            [COLS.DISCORD_CODE_EXPIRY]: expiryDate.toISOString(),
+            // [COLS.DISCORD_VERIFIED]: false // Don't reset verified here, only on ID change
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Stored Discord verification code for user ${userId}.`);
+
+        // MODIFIED: Send code via DM using the service
+        const messageText = `Your Trendy Bot verification code is: **${verificationCode}**\nThis code will expire in ${expiryMinutes} minutes.`;
+        const dmSent = await sendDiscordDM(discordUserId, messageText);
+
+        if (dmSent) {
+            console.log(`Sent verification code DM to Discord User ID ${discordUserId} for user ${userId}.`);
+            res.status(200).json({ message: `Verification code sent to your Discord DMs. Please check Discord.` });
+        } else {
+            console.error(`Failed to send Discord verification DM to user ${userId} (Discord ID: ${discordUserId}).`);
+             // Let the user know it might have failed
+             // Potentially revert the code storage or let verify handle it?
+             // For now, inform the user. The verify step won't work if the code wasn't received.
+             // Consider if NocoDB update should be reverted if DM fails.
+            return res.status(500).json({ message: 'Failed to send verification code via Discord DM. Please ensure you haven\'t blocked the bot and have DMs enabled.' });
+        }
+
+    } catch (error) {
+        console.error(`Error sending Discord verification code for user ${userId}:`, error);
+        next(new Error('Failed to send Discord verification code.'));
+    }
+};
+
+// --- Verify Discord Code ---
+const verifyDiscordCode = async (req, res, next) => {
+    const userId = req.userId;
+    const { verificationCode } = req.body;
+
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+    if (!verificationCode || typeof verificationCode !== 'string' || !/\d{6}/.test(verificationCode)) {
+        return res.status(400).json({ message: 'Invalid verification code format. Expected 6 digits.' });
+    }
+
+    try {
+        const userRecord = await NocoDBService.getUserRecordById(userId);
+        if (!userRecord) return res.status(404).json({ message: 'User not found' });
+
+        const storedCode = userRecord[COLS.DISCORD_VERIFICATION_CODE];
+        const expiryString = userRecord[COLS.DISCORD_CODE_EXPIRY];
+        const discordUserId = userRecord[COLS.DISCORD_USER_ID]; // Get User ID
+
+        // MODIFIED: Check for User ID existence
+        if (!storedCode || !expiryString || !discordUserId) { 
+            return res.status(400).json({ message: 'Verification process not initiated or Discord User ID missing. Please request a code first.' });
+        }
+
+        const expiryDate = new Date(expiryString);
+        if (isNaN(expiryDate.getTime()) || expiryDate < new Date()) {
+            await NocoDBService.updateUser(userId, {
+                [COLS.DISCORD_VERIFICATION_CODE]: null,
+                [COLS.DISCORD_CODE_EXPIRY]: null
+            });
+            console.log(`Cleared expired discord verification code for user ${userId}.`);
+            return res.status(400).json({ message: 'Verification code has expired. Please request a new one.' });
+        }
+
+        if (verificationCode !== storedCode) {
+            return res.status(400).json({ message: 'Invalid verification code.' });
+        }
+
+        // Verification successful - Update NocoDB
+        const dataToUpdate = {
+            [COLS.DISCORD_VERIFIED]: true,
+            [COLS.DISCORD_VERIFICATION_CODE]: null,
+            [COLS.DISCORD_CODE_EXPIRY]: null,
+        };
+        await NocoDBService.updateUser(userId, dataToUpdate);
+        console.log(`Discord verification successful for user ${userId}.`);
+
+        // MODIFIED: Send confirmation via DM
+        const confirmationMessage = '✅ Your Discord account has been successfully connected to Trendy Bot!';
+        const confirmDmSent = await sendDiscordDM(discordUserId, confirmationMessage);
+        if (confirmDmSent) {
+             console.log(`Sent Discord confirmation DM for user ${userId}.`);
+        } else {
+             console.warn(`Failed to send Discord confirmation DM for user ${userId}.`);
+             // Don't fail the request if confirmation sending fails
+        }
+        
+        // Notify Frontend via WebSocket
+        if (sendToUser) {
+            try {
+                await sendToUser(userId.toString(), { // Use sendToUser directly
+                    type: 'discordStatusUpdate', 
+                    payload: { verified: true }
+                });
+            } catch (wsError) {
+                console.error(`[verifyDiscordCode] Error sending WebSocket notification for user ${userId}:`, wsError);
+            }
+        }
+
+        res.status(200).json({ message: 'Discord account verified successfully.' }); // Changed message slightly
+
+    } catch (error) {
+        console.error(`Error verifying Discord code for user ${userId}:`, error);
+        next(new Error('Failed to verify Discord code due to a server error.'));
+    }
+};
+
+// --- Disconnect Discord ---
+const disconnectDiscord = async (req, res, next) => {
+     const userId = req.userId;
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+
+    try {
+        // MODIFIED: Clear discordUserId instead of webhook
+        await NocoDBService.updateUser(userId, {
+            [COLS.DISCORD_USER_ID]: null, // Clear User ID
+            [COLS.DISCORD_VERIFIED]: false,
+            [COLS.DISCORD_VERIFICATION_CODE]: null,
+            [COLS.DISCORD_CODE_EXPIRY]: null,
+            // Optionally clear webhook too if it exists?
+            // [COLS.DISCORD_WEBHOOK]: null 
+        });
+        console.log(`Cleared Discord connection info for user ${userId}.`);
+        
+        // Notify Frontend via WebSocket
+        if (sendToUser) {
+            try {
+               await sendToUser(userId.toString(), { type: 'discordStatusUpdate', payload: { verified: false } }); // Use sendToUser directly
+            } catch (wsError) {
+                console.error(`[disconnectDiscord] Error sending WebSocket notification for user ${userId}:`, wsError);
+            }
+        }
+
+        res.status(200).json({ message: 'Discord account disconnected successfully.' }); // Changed message slightly
+    } catch (error) {
+        console.error(`Error disconnecting Discord for user ${userId}:`, error);
+        next(new Error('Failed to disconnect Discord webhook.'));
+    }
+};
+
+// --- Disconnect Email ---
+const disconnectEmail = async (req, res, next) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+
+    try {
+        // MODIFIED: Clear email address instead of webhook
+        await NocoDBService.updateUser(userId, {
+            [COLS.NOTIF_EMAIL]: null, // Clear email address
+            [COLS.EMAIL_VERIFIED]: false, // Clear verification status
+            [COLS.EMAIL_VERIFICATION_CODE]: null, // Clear verification code
+            [COLS.EMAIL_CODE_EXPIRY]: null, // Clear expiry
+        });
+        console.log(`Cleared email connection info for user ${userId}.`);
+        
+        // Notify Frontend via WebSocket
+        if (sendToUser) {
+            try {
+               await sendToUser(userId.toString(), { type: 'emailStatusUpdate', payload: { verified: false } }); // Use sendToUser directly
+            } catch (wsError) {
+                console.error(`[disconnectEmail] Error sending WebSocket notification for user ${userId}:`, wsError);
+            }
+        }
+
+        res.status(200).json({ message: 'Email connection disconnected successfully.' }); // Changed message slightly
+    } catch (error) {
+        console.error(`Error disconnecting email for user ${userId}:`, error);
+        next(new Error('Failed to disconnect email.'));
+    }
+};
+
 module.exports = {
   updateUserPreferences,
   updateProfile,
@@ -1401,5 +1783,11 @@ module.exports = {
   verify2FA,
   disable2FA,
   deleteAccount,
-  getAvatarSignedUrl
+  getAvatarSignedUrl,
+  sendEmailVerificationCode,
+  verifyEmailCode,
+  sendDiscordVerificationCode,
+  verifyDiscordCode,
+  disconnectDiscord,
+  disconnectEmail
 }; 

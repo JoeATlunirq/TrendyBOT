@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserSettings } from '@/contexts/UserSettingsContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, BellRing, Send, CheckCircle, XCircle, KeyRound, Link as LinkIcon, Unlink } from 'lucide-react';
+import { Loader2, BellRing, Send, CheckCircle, XCircle, KeyRound, Link as LinkIcon, Unlink, Mail, BotMessageSquare, MessageSquareWarning } from 'lucide-react';
+import { Badge } from "@/components/ui/badge";
 
 // Determine the base API URL based on the environment
 const getApiBaseUrl = () => {
@@ -16,136 +16,102 @@ const getApiBaseUrl = () => {
     return '/api'; // Use relative path for Vercel production
   } else {
     // Use local backend URL for development
-    return 'http://localhost:5001/api';
+    return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5001/api';
   }
 };
 const BACKEND_API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL = BACKEND_API_BASE_URL;
 
-// Define type for state
-type NotificationSettings = {
+// --- Types --- 
+
+// Combined State for Notification Settings
+type NotificationSettingsData = {
+    // Values
+    notificationEmail: string | null; // Separate notification email (optional?)
     telegramChatId: string | null;
-    discordWebhookUrl: string | null;
+    discordUserId: string | null; // Use discordUserId
     deliveryPreference: string;
+    // Verification Statuses
+    emailVerified: boolean;
+    telegramVerified: boolean;
+    discordVerified: boolean;
 };
 
-// Update the TelegramStatus type to be more specific
-type TelegramStatus = 
-    | 'initial'           // Initial state
-    | 'entering_chat_id'  // Step 1: User is entering chat ID
-    | 'requesting_code'   // Transition: Requesting verification code
-    | 'entering_code'     // Step 2: User is entering verification code
-    | 'verifying_code'    // Transition: Verifying the code
-    | 'connected'         // Final: Successfully connected
-    | 'error';           // Error state
+// State for each verification flow
+type VerificationFlowStatus = 'initial' | 'code_sent' | 'verifying' | 'verified' | 'error';
 
-// Column Names (Hardcoded - ensure match backend .env/NocoDB)
-// const TELEGRAM_ID_COLUMN = 'telegram_chat_id'; // No longer fetched directly like this
-const DISCORD_URL_COLUMN = 'discord_webhook_url';
-const DELIVERY_PREF_COLUMN = 'delivery_preference';
-
-// Add this type outside the component
-type TelegramVerificationState = {
-    status: TelegramStatus;
-    chatId: string;
-    error: string | null;
-    isConnecting: boolean;
+type VerificationFlowState = {
+    status: VerificationFlowStatus;
+    inputValue: string; // For ChatID or Webhook URL
     codeInput: string;
-    // verificationSession?: string; // REMOVED - No longer needed
+    isLoading: boolean;
+    error: string | null;
 };
 
-// Helper functions for session storage
-const getStoredTelegramState = (): TelegramVerificationState | null => {
-    const stored = sessionStorage.getItem('telegramVerificationState');
-    return stored ? JSON.parse(stored) : null;
-};
+// --- Constants --- 
+const EMAIL_COLUMN = import.meta.env.VITE_EMAIL_COLUMN || 'Emails'; // Primary email column
 
-const setStoredTelegramState = (state: TelegramVerificationState) => {
-    sessionStorage.setItem('telegramVerificationState', JSON.stringify(state));
-};
+// --- Component --- 
 
 const NotificationSettings = () => {
     const { user, token } = useAuth();
-    const { settings, updateSettings, isLoading: isSettingsLoading } = useUserSettings();
     const { toast } = useToast();
-    const [isSaving, setIsSaving] = useState(false);
-    const [isTesting, setIsTesting] = useState<string | null>(null);
-    const [localSettings, setLocalSettings] = useState<NotificationSettings | null>(null);
-    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const [isLoading, setIsLoading] = useState(true); // Overall loading state
+    const [isSaving, setIsSaving] = useState(false); // For non-verification saves (like delivery pref)
+    const [isTesting, setIsTesting] = useState<string | null>(null); // For test notifications
 
-    // Initialize with clearer states
-    const [telegramState, setTelegramState] = useState<TelegramVerificationState>(() => {
-        const stored = getStoredTelegramState();
-        // Remove verificationSession from initial state restoration if present
-        if (stored) {
-            // We already deleted the property if it exists, just return the stored object
-            // delete stored.verificationSession; // REMOVED - Property doesn't exist on type anymore
-             return stored;
-        }
-        return {
-            status: 'initial',
-            chatId: '',
-            error: null,
-            isConnecting: false,
-            codeInput: ''
-        };
+    // State for the actual setting values
+    const [settingsData, setSettingsData] = useState<NotificationSettingsData | null>(null);
+
+    // State for verification flows
+    const [emailVerification, setEmailVerification] = useState<VerificationFlowState>({
+        status: 'initial', inputValue: '', codeInput: '', isLoading: false, error: null
+    });
+    const [telegramVerification, setTelegramVerification] = useState<VerificationFlowState>({
+        status: 'initial', inputValue: '', codeInput: '', isLoading: false, error: null
+    });
+    const [discordVerification, setDiscordVerification] = useState<VerificationFlowState>({
+        status: 'initial', inputValue: '', codeInput: '', isLoading: false, error: null
     });
 
-    // Update session storage whenever telegramState changes
-    const updateTelegramState = useCallback((newState: TelegramVerificationState | ((prev: TelegramVerificationState) => TelegramVerificationState)) => {
-        setTelegramState(prev => {
-            const nextState = typeof newState === 'function' ? newState(prev) : newState;
-            setStoredTelegramState(nextState);
-            return nextState;
-        });
-    }, []);
+    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Update the initialization effect
-    useEffect(() => {
-        if (!settings?.notificationSettings) return;
-        
-        const hasTelegramId = settings.notificationSettings.telegramChatId;
-        
-        // Only update based on settings if we are NOT in a verification step
-        // AND the status isn't already reflecting the settings correctly.
-        if (!['entering_code', 'verifying_code', 'requesting_code'].includes(telegramState.status)) {
-            const expectedStatus = hasTelegramId ? 'connected' : 'entering_chat_id';
-            if (telegramState.status !== expectedStatus) {
-                 updateTelegramState(prev => ({
-                    ...prev,
-                    status: expectedStatus,
-                    chatId: hasTelegramId || '',
-                    error: null,
-                    isConnecting: false,
-                    codeInput: ''
-                }));
-            }
-        }
-    }, [settings?.notificationSettings?.telegramChatId, telegramState.status, updateTelegramState]); // Add telegramState.status to dependency
-
-    // Fetch settings only once on load
+    // --- Fetch Initial Settings --- 
     const fetchSettings = useCallback(async () => {
         if (!token) return;
-        
+        setIsLoading(true);
         try {
-            const response = await axios.get(`${BACKEND_API_BASE_URL}/users/notifications`, {
+            const response = await axios.get(`${API_BASE_URL}/users/notifications`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            const fetchedTelegramId = response.data?.telegram_chat_id;
-            
-            if (telegramState.status !== 'entering_code' && telegramState.status !== 'verifying_code') {
-                updateTelegramState(prev => ({
-                    ...prev,
-                    status: fetchedTelegramId ? 'connected' : 'entering_chat_id',
-                    chatId: fetchedTelegramId || '',
-                    error: null
-                }));
-            }
-
-            setLocalSettings({
-                telegramChatId: fetchedTelegramId,
-                discordWebhookUrl: response.data[DISCORD_URL_COLUMN] ?? null,
-                deliveryPreference: response.data[DELIVERY_PREF_COLUMN] ?? 'Instantly',
+            const data = response.data;
+            setSettingsData({
+                notificationEmail: data.notificationEmail ?? null, // Use fetched notification email
+                telegramChatId: data.telegramChatId ?? null,
+                discordUserId: data.discordUserId ?? null, // Use discordUserId
+                deliveryPreference: data.deliveryPreference ?? 'Instantly',
+                emailVerified: data.emailVerified ?? false,
+                telegramVerified: data.telegramVerified ?? false,
+                discordVerified: data.discordVerified ?? false,
             });
+
+            // Update verification flow states based on fetched data
+            setEmailVerification(prev => ({
+                 ...prev,
+                status: data.emailVerified ? 'verified' : 'initial',
+                inputValue: data.notificationEmail || user?.[EMAIL_COLUMN] || '' // Use fetched notification email, fallback to primary
+            }));
+            setTelegramVerification(prev => ({
+                 ...prev, 
+                 status: data.telegramVerified ? 'verified' : 'initial', 
+                 inputValue: data.telegramChatId || '' 
+            }));
+            setDiscordVerification(prev => ({
+                 ...prev, 
+                 status: data.discordVerified ? 'verified' : 'initial', 
+                 inputValue: data.discordUserId || '' // Use discordUserId for input value
+            }));
+
         } catch (error: any) {
             console.error("Failed to fetch notification settings:", error);
             toast({ 
@@ -153,704 +119,521 @@ const NotificationSettings = () => {
                 description: error.response?.data?.message || error.message, 
                 variant: "destructive" 
             });
-            if (telegramState.status !== 'entering_code' && telegramState.status !== 'verifying_code') {
-                updateTelegramState(prev => ({
-                    ...prev,
-                    status: 'error',
-                    error: "Could not load Telegram status."
-                }));
-            }
+            // Set error states for verification flows?
+        } finally {
+            setIsLoading(false);
         }
-    }, [token, toast, telegramState.status, updateTelegramState]);
+    }, [token, toast, user]);
 
     useEffect(() => {
         fetchSettings();
     }, [fetchSettings]);
 
-    // Handle Telegram input change
-    const handleTelegramInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        updateTelegramState(prev => ({
-            ...prev,
-            chatId: e.target.value
-        }));
-    }, [updateTelegramState]);
+    // --- Generic Handlers --- 
 
-    // Handle verification code input change
-    const handleVerificationCodeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        updateTelegramState(prev => ({
-            ...prev,
-            codeInput: e.target.value
-        }));
-    }, [updateTelegramState]);
+    // Handle Verification Input Change
+    const handleVerificationInputChange = (
+        type: 'email' | 'telegram' | 'discord',
+        field: 'inputValue' | 'codeInput',
+        value: string
+    ) => {
+        const setState = type === 'email' ? setEmailVerification :
+                         type === 'telegram' ? setTelegramVerification :
+                         setDiscordVerification;
+        setState(prev => ({ ...prev, [field]: value, error: null }));
+    };
 
-    // Debounced save function
-    const debouncedSave = useCallback((newSettings: Partial<NotificationSettings>) => {
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
+    // Send Verification Code
+    const handleSendCode = async (type: 'email' | 'telegram' | 'discord') => {
+        const flowState = type === 'email' ? emailVerification :
+                          type === 'telegram' ? telegramVerification :
+                          discordVerification;
+        const setState = type === 'email' ? setEmailVerification :
+                         type === 'telegram' ? setTelegramVerification :
+                         setDiscordVerification;
         
-        if (!settings) {
-            console.error('Cannot save settings: current settings are null');
-            toast({
-                title: "Error Saving Settings",
-                description: "Current settings are not loaded. Please refresh the page.",
-                variant: "destructive"
-            });
+        let endpoint = `${API_BASE_URL}/users/${type}/send-code`;
+        let payload = {};
+        let inputToCheck = flowState.inputValue;
+
+        if (type === 'telegram') {
+            if (!inputToCheck || !/^-?\d+$/.test(inputToCheck)) {
+                toast({ title: "Invalid Input", description: "Please enter a valid Telegram Chat ID.", variant: "destructive" });
+                return;
+            }
+            payload = { chatId: String(inputToCheck) };
+        } else if (type === 'discord') {
+             if (!inputToCheck || !/^\d+$/.test(inputToCheck)) {
+                toast({ title: "Invalid Input", description: "Please enter a valid Discord User ID.", variant: "destructive" });
             return;
+            }
+            // No payload needed for Discord send-code, backend uses stored ID
+        } else { // Email
+            // No payload needed for email
         }
-        
-        saveTimeoutRef.current = setTimeout(async () => {
-            setIsSaving(true);
-            try {
-                await updateSettings({
-                    notificationSettings: {
-                        ...settings.notificationSettings, // Preserve other settings
-                        ...newSettings // Override with new values
-                    }
-                });
-                toast({
-                    title: "Settings Saved",
-                    description: "Your notification settings have been updated.",
-                    variant: "default"
-                });
+
+        setState(prev => ({ ...prev, isLoading: true, error: null }));
+        try {
+            const response = await axios.post(endpoint, payload, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setState(prev => ({ ...prev, status: 'code_sent', isLoading: false, codeInput: '', error: null }));
+            toast({ title: "Code Sent", description: response.data.message, variant: "default" });
             } catch (error: any) {
-                console.error('Failed to save settings:', error);
-                toast({
-                    title: "Error Saving Settings",
-                    description: error.response?.data?.message || "Failed to save your settings. Please try again.",
-                    variant: "destructive"
-                });
-            } finally {
-                setIsSaving(false);
-            }
-        }, 1000); // 1 second debounce
-    }, [updateSettings, toast, settings]);
-
-    // Updated to take only the relevant field
-    const handleDiscordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { value } = e.target;
-        const newDiscordUrl = value || null; // Treat empty string as null
-        setLocalSettings(prev => prev ? { ...prev, discordWebhookUrl: newDiscordUrl } : { telegramChatId: null, discordWebhookUrl: newDiscordUrl, deliveryPreference: 'Instantly' });
-        debouncedSave({ discordWebhookUrl: newDiscordUrl }); // Save only discord
+            const message = error.response?.data?.message || `Failed to send ${type} verification code.`;
+            setState(prev => ({ ...prev, isLoading: false, error: message }));
+            toast({ title: "Error", description: message, variant: "destructive" });
+        }
     };
 
-    // Updated to take only the relevant field
-    const handleSelectChange = (value: string) => {
-        setLocalSettings(prev => prev ? { ...prev, deliveryPreference: value } : { telegramChatId: null, discordWebhookUrl: null, deliveryPreference: value });
-        debouncedSave({ deliveryPreference: value }); // Save only preference
-    };
+    // Verify Code
+    const handleVerifyCode = async (type: 'email' | 'telegram' | 'discord') => {
+        const flowState = type === 'email' ? emailVerification :
+                          type === 'telegram' ? telegramVerification :
+                          discordVerification;
+        const setState = type === 'email' ? setEmailVerification :
+                         type === 'telegram' ? setTelegramVerification :
+                         setDiscordVerification;
 
-    // --- Telegram Connection Logic ---
-
-    // Update the request code handler
-    const handleRequestTelegramCode = async (e?: React.FormEvent) => {
-        e?.preventDefault(); // Prevent form submission
-        if (!token || !telegramState.chatId || telegramState.isConnecting) return;
-
-        // Validate Chat ID format on frontend too
-        if (!/^-?\d+$/.test(telegramState.chatId)) {
-             toast({ title: "Invalid Chat ID", description: "Please enter a valid numerical Telegram Chat ID.", variant: "destructive" });
+        if (!flowState.codeInput || !/\d{6}/.test(flowState.codeInput)) {
+            toast({ title: "Invalid Code", description: "Please enter the 6-digit code.", variant: "destructive" });
              return;
         }
 
+        setState(prev => ({ ...prev, isLoading: true, error: null, status: 'verifying' }));
         try {
-            updateTelegramState(prev => ({
+            const endpoint = `${API_BASE_URL}/users/${type}/verify-code`;
+            const response = await axios.post(endpoint, { verificationCode: flowState.codeInput }, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setState(prev => ({
                 ...prev,
-                status: 'requesting_code',
-                isConnecting: true,
-                error: null
-            }));
-
-            // Use the new endpoint
-            await axios.post(
-                `${BACKEND_API_BASE_URL}/users/telegram/send-code`, // Updated endpoint
-                { chatId: telegramState.chatId }, // Payload is just the chat ID
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-            
-            // Backend response doesn't contain session ID anymore
-            const newState = {
-                status: 'entering_code' as TelegramStatus,
-                chatId: telegramState.chatId,
-                codeInput: '',
-                isConnecting: false,
+                status: 'verified',
+                isLoading: false,
                 error: null,
-                // verificationSession REMOVED
-            };
-            // Update state using the setter that handles session storage
-            updateTelegramState(newState);
-            
-            toast({ 
-                title: "Verification Code Sent", 
-                description: `Check Telegram for a message from the bot. Code expires in 10 minutes.`,
-                variant: "default"
-            });
-        } catch (error: any) {
-            const message = error.response?.data?.message || "Failed to send verification code.";
-            console.error("Telegram code request error:", error.response?.data || error);
-            toast({ title: "Request Failed", description: message, variant: "destructive" });
-            
-            updateTelegramState(prev => ({
-                ...prev,
-                status: 'entering_chat_id', // Go back to entering ID on error
-                error: message,
-                isConnecting: false
+                codeInput: '' // Clear code input on success
             }));
+            // Update the main settings data to reflect verification
+            setSettingsData(prev => prev ? { ...prev, [`${type}Verified`]: true } : null);
+            toast({ title: "Success", description: response.data.message, variant: "default" });
+        } catch (error: any) {
+            const message = error.response?.data?.message || `Failed to verify ${type} code.`;
+            // Revert status back to code_sent on error so user can retry
+            setState(prev => ({ ...prev, isLoading: false, error: message, status: 'code_sent' }));
+            toast({ title: "Verification Failed", description: message, variant: "destructive" });
         }
     };
 
-    // Update the verify code handler
-    const handleVerifyTelegramCode = async (e?: React.FormEvent) => {
-        e?.preventDefault(); // Prevent form submission
-        if (!token || !telegramState.codeInput || telegramState.codeInput.length !== 6 || telegramState.isConnecting) {
-             toast({ title: "Invalid Code", description: "Please enter the 6-digit code from Telegram.", variant: "destructive" });
+    // Disconnect Channel
+    const handleDisconnect = async (type: 'email' | 'telegram' | 'discord') => {
+        const setState = type === 'email' ? setEmailVerification :
+                         type === 'telegram' ? setTelegramVerification :
+                         setDiscordVerification;
+        
+        // Optional: Confirmation dialog
+        if (!window.confirm(`Are you sure you want to disconnect your ${type} notification channel?`)) {
              return;
         }
 
+        setState(prev => ({ ...prev, isLoading: true, error: null }));
         try {
-            updateTelegramState(prev => ({
-                ...prev,
-                status: 'verifying_code',
-                isConnecting: true,
+            const endpoint = `${API_BASE_URL}/users/${type}/disconnect`;
+            const response = await axios.post(endpoint, {}, { // No body needed
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+             setState({
+                status: 'initial',
+                inputValue: type === 'email' ? (user?.[EMAIL_COLUMN] || '') : '', // Reset input
+                codeInput: '',
+                isLoading: false,
                 error: null
-            }));
+            });
+            // Update main settings data
+            setSettingsData(prev => prev ? { ...prev, [`${type}Verified`]: false, [type === 'telegram' ? 'telegramChatId' : type === 'discord' ? 'discordUserId' : 'notificationEmail']: null } : null);
+             toast({ title: "Disconnected", description: response.data.message, variant: "default" });
+        } catch (error: any) {
+            const message = error.response?.data?.message || `Failed to disconnect ${type}.`;
+            setState(prev => ({ ...prev, isLoading: false, error: message })); // Keep status as 'verified' on disconnect failure
+            toast({ title: "Error", description: message, variant: "destructive" });
+        }
+    };
 
-             // Use the new endpoint and payload
-            const response = await axios.post(
-                `${BACKEND_API_BASE_URL}/users/telegram/verify-code`, // Updated endpoint
-                { 
-                    verificationCode: telegramState.codeInput, // Only send the code
-                    // verificationSession REMOVED
-                },
+    // Handle Delivery Preference Change (simplified, uses direct API call now)
+    const handleDeliveryPreferenceChange = async (value: string) => {
+        if (!token) return;
+        const previousValue = settingsData?.deliveryPreference;
+        // Optimistically update UI
+        setSettingsData(prev => prev ? { ...prev, deliveryPreference: value } : null);
+        setIsSaving(true); 
+        try {
+            await axios.put(`${API_BASE_URL}/users/notifications`, 
+                { deliveryPreference: value }, 
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
-
-            // Clear verification state from storage as we are done
-            sessionStorage.removeItem('telegramVerificationState');
-
-            // Get the verified chatId from the backend response
-            const verifiedChatId = response.data?.chatId;
-            if (!verifiedChatId) {
-                 throw new Error("Verification successful, but Chat ID was missing from response.");
-            }
-
-            // Update local state to connected
-            const connectedState = {
-                status: 'connected' as TelegramStatus,
-                chatId: verifiedChatId, // Use verified ID from backend
-                codeInput: '',
-                isConnecting: false,
-                error: null
-            };
-            console.log("[handleVerifyTelegramCode] Setting state to connected:", connectedState);
-            updateTelegramState(connectedState);
-
-            toast({ 
-                title: "Telegram Connected!", 
-                description: response.data?.message || `Successfully connected Telegram.`, // Use backend message
-                variant: "default"
-            });
+            toast({ title: "Preference Updated", variant: "default" });
         } catch (error: any) {
-            const message = error.response?.data?.message || "Verification failed. Code might be incorrect or expired.";
-            console.error("Telegram code verification error:", error.response?.data || error);
-            toast({ title: "Connection Failed", description: message, variant: "destructive" });
-            
-            updateTelegramState(prev => ({
-                ...prev,
-                error: message,
-                isConnecting: false,
-                status: 'entering_code', // Keep in code entry state on error
-                codeInput: '' // Clear code input on error
-            }));
+             console.error("Failed to save delivery preference:", error);
+             toast({ title: "Save Error", description: error.response?.data?.message || "Could not save preference.", variant: "destructive" });
+             // Revert UI on error
+             setSettingsData(prev => prev ? { ...prev, deliveryPreference: previousValue || 'Instantly' } : null);
+        } finally {
+            setIsSaving(false);
         }
     };
     
-    const handleDisconnectTelegram = async () => {
-        if (!token || telegramState.isConnecting) return;
-        // Keep track of the currently displayed chat ID for the toast message
-        const currentChatId = telegramState.chatId;
-        updateTelegramState(prev => ({ ...prev, isConnecting: true, error: null }));
+    // Handle Discord User ID Input Change (Save immediately)
+    const handleDiscordInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        console.log(`[handleDiscordInputChange] Input changed. Event value: ${e.target.value}`);
+        
+        if (!token) return;
+        const value = e.target.value.replace(/\D/g, ''); // Allow only digits for User ID
+        const previousValue = settingsData?.discordUserId;
+
+        // Update local state immediately
+        setDiscordVerification(prev => ({ ...prev, inputValue: value, error: null }));
+        setSettingsData(prev => prev ? { ...prev, discordUserId: value || null } : null);
+        
+        // Don't save if verified - user must disconnect first
+        if (discordVerification.status === 'verified') return;
+        
+        // Save immediately via API
+        setIsSaving(true); 
         try {
-            // Use POST to the new disconnect endpoint
-            await axios.post(
-                `${BACKEND_API_BASE_URL}/users/telegram/disconnect`, // Updated endpoint
-                {}, // No payload needed
+            console.log(`[handleDiscordInputChange] Sending discordUserId to backend: ${value}`);
+            
+            const response = await axios.put(`${API_BASE_URL}/users/notifications`, 
+                { discordUserId: value || null }, // Send discordUserId
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
-            
-            // Clear local state
-            const disconnectedState = {
-                status: 'entering_chat_id' as TelegramStatus,
-                chatId: '',
-                codeInput: '',
-                isConnecting: false,
-                error: null
-            };
-            updateTelegramState(disconnectedState);
-
-            toast({ 
-                title: "Telegram Disconnected", 
-                description: `Disconnected Telegram ID ${maskChatId(currentChatId)}.`, 
-                variant: "default" 
-            });
-        } catch (error: any) {
-             const message = error.response?.data?.message || "Failed to disconnect Telegram.";
-            console.error("Telegram disconnect error:", error.response?.data || error);
-            toast({ title: "Disconnect Failed", description: message, variant: "destructive" });
-            // Revert state to connected on failure
-            updateTelegramState(prev => ({
-                ...prev,
-                status: 'connected', // Revert status
-                isConnecting: false,
-                error: message // Show the error
-            }));
+            // Backend resets verification status on ID change
+            setDiscordVerification(prev => ({ ...prev, status: 'initial' })); 
+            setSettingsData(prev => prev ? { ...prev, discordVerified: false } : null);
+            toast({ title: "Discord User ID Saved", description: "Verification status reset.", variant: "default" });
+        } catch (error: any) { 
+             console.error("Failed to save Discord User ID:", error);
+             toast({ title: "Save Error", description: error.response?.data?.message || "Could not save Discord User ID.", variant: "destructive" });
+             // Revert UI state on error
+             setDiscordVerification(prev => ({ ...prev, inputValue: previousValue || '' }));
+             setSettingsData(prev => prev ? { ...prev, discordUserId: previousValue || null } : null);
+        } finally {
+            setIsSaving(false);
         }
     };
 
-    // Update the cancel handler
-    const handleCancelTelegramConnect = () => {
-        sessionStorage.removeItem('telegramVerificationState');
-        updateTelegramState({
-            status: 'entering_chat_id',
-            chatId: '',
-            codeInput: '',
-            error: null,
-            isConnecting: false
-        });
-    };
-
-    // Go back to entering Chat ID
-    const handleBackToEnterChatId = () => {
-        updateTelegramState({
-            status: 'entering_chat_id',
-            chatId: '',
-            error: null,
-            isConnecting: false,
-            codeInput: ''
-        });
-    };
-
-    // --- Test Notification Handler (Unchanged logic, just ensure TG check is correct) ---
+    // Test Notification Handler (reuse existing)
     const handleTestNotification = async (channelType: 'telegram' | 'discord' | 'email') => {
-        if (!token || !settings || isTesting) return;
+        if (!token) return;
         setIsTesting(channelType);
-
         try {
-            await axios.post(
+            const response = await axios.post(
                 `${BACKEND_API_BASE_URL}/users/notifications/test`,
-                { channel: channelType },
-                { headers: { 'Authorization': `Bearer ${token}` } }
+                { channelType },
+                { headers: { 'Authorization': `Bearer ${token}` }}
             );
-            toast({ title: "Test Sent", description: `A test notification has been sent via ${channelType}.` });
+            toast({
+                title: `Test Sent (${channelType})`,
+                description: response.data.message,
+                variant: "default"
+            });
         } catch (error: any) {
-             const message = error.response?.data?.message || `Failed to send test ${channelType} notification.`;
-            toast({ title: "Test Failed", description: message, variant: "destructive" });
-            console.error(`${channelType} test error:`, error.response?.data || error);
+            toast({
+                title: `Test Failed (${channelType})`,
+                description: error.response?.data?.message || "Could not send test notification.",
+                variant: "destructive"
+            });
+            console.error(`Test Notification Error (${channelType}):`, error.response?.data || error);
         } finally {
             setIsTesting(null);
         }
     };
 
-    // Helper to mask chat ID
-    const maskChatId = (chatId: string): string => {
-        if (!chatId || chatId.length < 4) return chatId;
-        return `${chatId.substring(0, 2)}...${chatId.substring(chatId.length - 2)}`;
-    }
+    // --- NEW: Handler for Email Input Change (Save immediately) ---
+    const handleEmailInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!token) return;
+        const value = e.target.value;
+        const previousValue = settingsData?.notificationEmail;
 
-    // Handle form submissions
-    const handleFormSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (telegramState.status === 'entering_code') {
-            handleVerifyTelegramCode();
-        } else {
-            handleRequestTelegramCode();
+        // Update local state immediately
+        setEmailVerification(prev => ({ ...prev, inputValue: value, error: null }));
+        setSettingsData(prev => prev ? { ...prev, notificationEmail: value || null } : null);
+        
+        // Don't save if verified - user must disconnect first
+        if (emailVerification.status === 'verified') return;
+        
+        // Save immediately via API
+        setIsSaving(true); // Use a general saving indicator if needed
+        try {
+            // Call the endpoint that handles updating notification settings
+            const response = await axios.put(`${API_BASE_URL}/users/notifications`, 
+                { notificationEmail: value || null }, // Send the new email
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            // Backend should have marked email as unverified upon change.
+            // We need to refresh the state to reflect this.
+            // Option 1: Refetch all settings (simpler)
+            // fetchSettings(); 
+            // Option 2: Update local state based on assumption or response (if backend confirms)
+            setEmailVerification(prev => ({ ...prev, status: 'initial' })); // Assume unverified now
+            setSettingsData(prev => prev ? { ...prev, emailVerified: false } : null);
+            toast({ title: "Notification Email Saved", description: "Verification status reset.", variant: "default" });
+
+        } catch (error: any) { 
+             console.error("Failed to save notification email:", error);
+             toast({ title: "Save Error", description: error.response?.data?.message || "Could not save email address.", variant: "destructive" });
+             // Revert UI state on error
+             setEmailVerification(prev => ({ ...prev, inputValue: previousValue || '' }));
+             setSettingsData(prev => prev ? { ...prev, notificationEmail: previousValue || null } : null);
+        } finally {
+            setIsSaving(false);
         }
     };
 
-    // Update the chat ID input section
-    const renderChatIdInput = () => (
-        <form onSubmit={handleFormSubmit} className="space-y-4">
-            <div className="space-y-2">
-                <Label htmlFor="telegramChatId" className="text-neutral-200">Telegram Chat ID</Label>
-                <div className="relative">
-                    <Input
-                        id="telegramChatId"
-                        value={telegramState.chatId}
-                        onChange={handleTelegramInputChange}
-                        placeholder="Enter your Telegram Chat ID"
-                        className="bg-neutral-800 border-neutral-700 text-white pr-24"
-                        disabled={telegramState.isConnecting}
-                    />
-                    <Button
-                        type="submit"
-                        disabled={!telegramState.chatId || telegramState.isConnecting}
-                        className="absolute right-1 top-1 bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90 h-8 px-3"
-                    >
-                        {telegramState.isConnecting ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <span className="flex items-center gap-1">
-                                <KeyRound className="h-4 w-4" />
-                                Verify
-                            </span>
-                        )}
-                    </Button>
-                </div>
-                <p className="text-sm text-neutral-400">
-                    Message @TrendyBot on Telegram to get your Chat ID
-                </p>
-            </div>
-        </form>
-    );
+    // --- Render Helper --- 
+    const renderVerificationSection = (
+        type: 'email' | 'telegram' | 'discord',
+        title: string,
+        description: string,
+        icon: React.ReactNode,
+        inputLabel: string,
+        inputPlaceholder: string,
+        inputType: 'email' | 'text' | 'url' = 'text',
+        inputDisabled: boolean = false,
+        extraInfo?: React.ReactNode
+    ) => {
+        const flowState = type === 'email' ? emailVerification :
+                          type === 'telegram' ? telegramVerification :
+                          discordVerification;
+        const isVerified = flowState.status === 'verified';
 
-    // Update the verification code input section
-    const renderVerificationCodeInput = () => (
-        <form onSubmit={handleFormSubmit} className="space-y-4">
-            <div className="space-y-2">
-                <Label htmlFor="telegramCode" className="text-neutral-200">Verification Code</Label>
-                <div className="relative">
-                    <Input
-                        id="telegramCode"
-                        value={telegramState.codeInput}
-                        onChange={handleVerificationCodeChange}
-                        placeholder="Enter 6-digit code"
-                        maxLength={6}
-                        className="bg-neutral-800 border-neutral-700 text-white pr-24"
-                        disabled={telegramState.status === 'verifying_code' || telegramState.isConnecting}
-                    />
-                    <Button
-                        type="submit"
-                        disabled={!telegramState.codeInput || telegramState.codeInput.length !== 6 || telegramState.status === 'verifying_code' || telegramState.isConnecting}
-                        className="absolute right-1 top-1 bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90 h-8 px-3"
-                    >
-                        {telegramState.status === 'verifying_code' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <span className="flex items-center gap-1">
-                                <CheckCircle className="h-4 w-4" />
-                                Verify
-                            </span>
-                        )}
-                    </Button>
-                </div>
-                <div className="flex justify-between items-center">
-                    <p className="text-sm text-neutral-400">
-                        Check your Telegram for the verification code
-                    </p>
-                    <Button
-                        onClick={handleCancelTelegramConnect}
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-neutral-400 hover:text-white"
-                        disabled={telegramState.status === 'verifying_code'}
-                    >
-                        Cancel
-                    </Button>
-                </div>
-            </div>
-        </form>
-    );
-
-    if (isSettingsLoading) {
         return (
-            <div className="container mx-auto py-8 px-4 md:px-6">
-                <div className="flex items-center justify-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-trendy-yellow" />
-                    <span className="ml-2 text-neutral-400">Loading settings...</span>
+            <div className="p-4 border border-neutral-700 rounded-md space-y-4">
+                <div className="flex justify-between items-start gap-4">
+                    <div className="flex items-start gap-3">
+                        <div className="text-neutral-400 mt-1">{icon}</div>
+                        <div>
+                            <div className="text-neutral-200 font-medium flex items-center flex-wrap gap-2">
+                                {title}
+                                {isVerified && (
+                                    <Badge variant="outline" className="border-green-500/70 bg-green-900/30 text-green-300 text-xs px-1.5 py-0">
+                                        <CheckCircle className="h-3 w-3 mr-1" /> Verified
+                                    </Badge>
+                                )}
+                                {flowState.status === 'code_sent' && (
+                                     <Badge variant="outline" className="border-yellow-500/70 bg-yellow-900/30 text-yellow-300 text-xs px-1.5 py-0">
+                                         <KeyRound className="h-3 w-3 mr-1" /> Pending Verification
+                                     </Badge>
+                                )}
+                                 {flowState.status === 'initial' && !flowState.isLoading && settingsData && !settingsData[`${type}Verified`] && (
+                                      <Badge variant="outline" className="border-neutral-600 bg-neutral-700/40 text-neutral-400 text-xs px-1.5 py-0">
+                                         Not Verified
+                                     </Badge>
+                                 )}
+                            </div>
+                            <p className="text-xs text-neutral-400 mt-0.5">{description}</p>
+                        </div>
+                    </div>
+                    {isVerified && (
+                    <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDisconnect(type)}
+                            disabled={flowState.isLoading}
+                            className="text-xs h-7 px-2 bg-red-800/80 hover:bg-red-700/90"
+                        >
+                            {flowState.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlink className="h-3 w-3" />}
+                            <span className="ml-1.5">Disconnect</span>
+                        </Button>
+                    )}
                 </div>
+
+                {/* Input section - show unless verified */} 
+                {!isVerified && (
+                    <div className="space-y-3 pt-3 border-t border-neutral-700/50">
+                        <div>
+                            <Label htmlFor={`${type}-input`} className="text-neutral-300 text-xs">{inputLabel}</Label>
+                            <Input
+                                id={`${type}-input`}
+                                type={inputType}
+                                value={flowState.inputValue}
+                                placeholder={inputPlaceholder}
+                                // Use specific handlers
+                                onChange={type === 'email' ? handleEmailInputChange :
+                                          type === 'discord' ? handleDiscordInputChange : // Use updated handler
+                                          (e) => handleVerificationInputChange(type, 'inputValue', e.target.value)}
+                                disabled={flowState.isLoading || (type === 'email' ? false : inputDisabled)}
+                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow text-sm"
+                            />
+                             {extraInfo && <div className="mt-1.5">{extraInfo}</div>}
+            </div>
+
+                        {/* Show Send Code / Verification Input */} 
+                        {flowState.status === 'code_sent' || flowState.status === 'verifying' ? (
+                            <div className="space-y-3">
+                                 <div className="space-y-1.5">
+                                     <Label htmlFor={`${type}-code-input`} className="text-neutral-300 text-xs">Verification Code</Label>
+                    <Input
+                                         id={`${type}-code-input`}
+                                         type="text"
+                                         inputMode="numeric"
+                                         pattern="\d{6}"
+                        maxLength={6}
+                                         value={flowState.codeInput}
+                                         onChange={(e) => handleVerificationInputChange(type, 'codeInput', e.target.value.replace(/\D/g, ''))}
+                                         placeholder="6-digit code"
+                                         required
+                                         disabled={flowState.isLoading}
+                                         className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow text-sm w-32"
+                                     />
+                                 </div>
+                                <div className="flex justify-between items-center gap-3">
+                                    <Button 
+                                        type="button"
+                                        onClick={() => handleVerifyCode(type)}
+                                        disabled={flowState.isLoading || flowState.codeInput.length !== 6}
+                                        size="sm"
+                                        className="text-xs h-8 bg-trendy-yellow text-trendy-brown hover:bg-trendy-yellow/90"
+                                    >
+                                        {flowState.isLoading && flowState.status === 'verifying' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-1.5 h-3.5 w-3.5"/>}
+                                        Verify Code
+                                    </Button>
+                    <Button
+                                        variant="ghost"
+                                        type="button" 
+                                        onClick={() => handleSendCode(type)} // Resend code
+                                        disabled={flowState.isLoading}
+                                        className="text-neutral-400 hover:text-trendy-yellow text-xs h-8 px-2"
+                                    >
+                                         {flowState.isLoading && flowState.status !== 'verifying' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3"/>}
+                                        Resend Code
+                                    </Button>
+                                </div>
+                           </div>
+                        ) : (
+                            <Button 
+                                type="button"
+                                onClick={() => handleSendCode(type)}
+                                // Update disabled check for discord (ensure ID is present)
+                                disabled={!flowState.inputValue || flowState.isLoading || (type === 'discord' && !/\d+/.test(flowState.inputValue))}
+                                size="sm"
+                                className="text-xs h-8 bg-neutral-600 hover:bg-neutral-500 text-white"
+                            >
+                                {flowState.isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-3.5 w-3.5"/>}
+                                Send Verification Code
+                            </Button>
+                        )}
+                        {flowState.error && <p className="text-xs text-red-400">Error: {flowState.error}</p>}
+                </div>
+                )}
+                
+                {/* Test Button - Only show if verified */} 
+                {isVerified && (
+                    <div className="pt-3 border-t border-neutral-700/50">
+                    <Button
+                             variant="outline" 
+                        size="sm"
+                             onClick={() => handleTestNotification(type)}
+                             disabled={isTesting === type}
+                             className="text-xs h-7 px-2 border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80"
+                    >
+                            {isTesting === type ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <BellRing className="mr-1.5 h-3 w-3"/>}
+                             Send Test Notification
+                    </Button>
+                </div>
+                )}
+            </div>
+    );
+    };
+
+    // --- Render Component --- 
+
+    if (isLoading || !settingsData) {
+        return (
+            <div className="container mx-auto py-8 px-4 md:px-6 max-w-3xl flex justify-center items-center min-h-[300px]">
+                <Loader2 className="h-8 w-8 animate-spin text-neutral-400" />
             </div>
         );
     }
 
-    // Still need settings guard for Discord/Delivery Prefs access
-    if (!settings || !localSettings) return null; // Added localSettings check for safety
-
     return (
-        <div className="container mx-auto py-8 px-4 md:px-6 max-w-4xl">
-             <div className="mb-6">
-                <h1 className="text-3xl font-bold text-white font-orbitron">Notification Settings</h1>
-                <p className="text-neutral-400">Manage channels, delivery preferences, and templates for your alerts.</p>
-            </div>
+        <div className="container mx-auto py-8 px-4 md:px-6 max-w-3xl">
+            <h1 className="text-3xl font-bold mb-2 text-white font-orbitron">Notification Settings</h1>
+            <p className="text-neutral-400 mb-6">Connect your preferred channels and choose how you receive alerts.</p>
 
-            <div className="space-y-8">
-                {/* Manage Notification Channels Card */}
-                <Card className="bg-neutral-800/50 border-neutral-700/50">
+            <Card className="mb-6 bg-neutral-800/50 border-neutral-700/50">
                     <CardHeader>
-                        <div className="flex items-center gap-2">
-                             <BellRing className="h-5 w-5 text-trendy-yellow" />
-                            <CardTitle className="text-white font-orbitron">Manage Notification Channels</CardTitle>
-                        </div>
-                        <CardDescription className="text-neutral-400 pt-1 pl-7">Connect and configure where you receive alerts.</CardDescription>
+                    <CardTitle className="text-white font-orbitron">Connected Channels</CardTitle>
+                    <CardDescription className="text-neutral-400">Verify your channels to receive alerts.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-6">
-                        {/* Email Section (No changes) */}
-                        <div className="flex items-center justify-between p-4 border border-neutral-700 rounded-md">
-                             <div className="space-y-1">
-                                <Label className="text-base text-neutral-200">Email</Label>
-                                <p className="text-sm text-neutral-400">Notifications will be sent to: {user?.email}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-green-400 bg-green-900/50 px-2 py-1 rounded-md border border-green-700 flex items-center gap-1"><CheckCircle size={14}/>Connected</span>
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleTestNotification('email')}
-                                    disabled={isTesting !== null || telegramState.isConnecting}
-                                    className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white"
-                                >
-                                    {isTesting === 'email' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                                    Test
-                                </Button>
-                            </div>
-                        </div>
-
-                        {/* --- Telegram Section (No structural changes needed, buttons are already separate) --- */}
-                        <Card className="bg-neutral-800/50 border-neutral-700/50">
-                            <CardHeader>
-                                <div className="flex items-center gap-2">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-trendy-yellow" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
-                                    </svg>
-                                    <CardTitle className="text-white font-orbitron">Telegram Settings</CardTitle>
-                                </div>
-                                <CardDescription className="text-neutral-400 pt-1 pl-7">
-                                    Connect your Telegram account to receive notifications.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-6">
-                                {telegramState.status === 'connected' && (
-                                    <div className="space-y-4">
-                                        <div className="flex items-center justify-between p-4 bg-neutral-800/50 rounded-lg border border-neutral-700/50">
-                                            <div className="space-y-1">
-                                                <div className="flex items-center gap-2 text-green-400">
-                                                    <CheckCircle className="h-5 w-5" />
-                                                    <span className="font-medium">Connected to Telegram</span>
-                            </div>
-                                    <p className="text-sm text-neutral-400">
-                                                    Chat ID: {maskChatId(telegramState.chatId || 'N/A')} {/* Added default */}
-                                                </p>
-                                    </div>
-                                            <div className="flex items-center gap-2">
-                                        <Button
-                                                    onClick={() => handleTestNotification('telegram')}
-                                                    disabled={isTesting !== null}
-                                                    variant="outline"
-                                            size="sm"
-                                                    className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white"
-                                                >
-                                                    {isTesting === 'telegram' ? (
-                                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <Send className="mr-2 h-4 w-4" />
-                                                    )}
-                                            Test
-                                        </Button>
-                                        <Button
-                                                    onClick={handleDisconnectTelegram}
-                                                    variant="outline"
-                                            size="sm"
-                                                    className="border-red-700/50 text-red-400 hover:bg-red-900/20 hover:border-red-700"
-                                                    disabled={telegramState.isConnecting}
-                                                >
-                                                    {telegramState.isConnecting ? (
-                                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <Unlink className="mr-2 h-4 w-4" />
-                                                    )}
-                                            Disconnect
-                                        </Button>
-                                    </div>
-                                </div>
-                                </div>
-                            )}
-
-                                {(telegramState.status === 'initial' || telegramState.status === 'entering_chat_id') && renderChatIdInput()}
-
-                                {(telegramState.status === 'entering_code' || telegramState.status === 'requesting_code' || telegramState.status === 'verifying_code') && renderVerificationCodeInput()}
-
-                                {telegramState.error && (
-                                    <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 p-3 rounded-md border border-red-500/20">
-                                        <XCircle className="h-4 w-4 flex-shrink-0" />
-                                        <p>{telegramState.error}</p>
-                        </div>
+                <CardContent className="space-y-5">
+                    {/* Email Verification Section */} 
+                     {renderVerificationSection(
+                        'email',
+                        'Email',
+                        "Enter the email address where you want to receive notifications.",
+                        <Mail className="h-5 w-5" />,
+                        'Notification Email',
+                        'your-notification-email@example.com',
+                        'email',
+                        false // Input is NOT disabled anymore
+                    )}
+                    
+                    {/* Telegram Verification Section */} 
+                    {renderVerificationSection(
+                        'telegram',
+                        'Telegram',
+                        'Connect your Telegram account via Chat ID.',
+                        <Send className="h-5 w-5" />,
+                        'Your Telegram Chat ID',
+                        'e.g., -100123456789 or 123456789',
+                        'text',
+                        false,
+                        <p className="text-xs text-neutral-500">
+                            Need help finding your Chat ID? Talk to <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="underline text-trendy-yellow/80 hover:text-trendy-yellow">@userinfobot</a> on Telegram.
+                        </p>
+                    )}
+                    
+                    {/* Discord Verification Section - MODIFIED */} 
+                    {renderVerificationSection(
+                        'discord',
+                        'Discord',
+                        'Connect your Discord account via User ID to receive DMs.', // Updated desc
+                        <BotMessageSquare className="h-5 w-5" />,
+                        'Your Discord User ID', // Updated label
+                        'e.g., 123456789012345678', // Updated placeholder
+                        'text', // Change input type maybe?
+                        false,
+                         <p className="text-xs text-neutral-500 flex items-start gap-1.5">
+                            <MessageSquareWarning className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0 mt-px" />
+                           <span>You can find your User ID in Discord's settings (User Settings -&gt; Advanced -&gt; Enable Developer Mode, then right-click your profile and 'Copy User ID'). Verification codes will be sent via DM from the bot.</span>
+                         </p>
                                 )}
                             </CardContent>
                         </Card>
 
-                        {/* Discord Section (Use handleDiscordInputChange) */}
-                        <div className="p-4 border border-neutral-700 rounded-md space-y-2">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-base text-neutral-200 flex items-center gap-2">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24"><path fill="currentColor" d="M20.317 4.483A12.12 12.12 0 0 0 12.05 2c-1.82 0-3.53.4-5.086 1.15-.424.213-.806.467-1.14.76-.24.213-.46.448-.654.704-.338.447-.6 .955-.775 1.506C4.13 7.17 4 8.264 4 9.42v6.82c0 1.32.263 2.516.746 3.592.483 1.076 1.18 1.96 2.09 2.652.91.69 2.022 1.166 3.336 1.43a10.07 10.07 0 0 0 3.88.575c.74 0 1.46-.074 2.156-.224a8.89 8.89 0 0 0 3.756-1.781c.894-.69 1.59-1.575 2.075-2.651.484-1.077.746-2.272.746-3.592V9.42c0-1.158-.13-2.25-.39-3.277-.175-.55-.437-1.06-.775-1.507-.193-.256-.414-.49-.654-.703-.335-.293-.717-.547-1.14-.76zm-4.13 8.197c-.654 0-1.18-.53-1.18-1.18s.526-1.18 1.18-1.18c.653 0 1.18.53 1.18 1.18s-.527 1.18-1.18 1.18zm-8.323 0c-.654 0-1.18-.53-1.18-1.18s.526-1.18 1.18-1.18c.653 0 1.18.53 1.18 1.18s-.526 1.18-1.18 1.18z"/></svg> {/* Simple Discord Icon */}
-                                    Discord
-                                </Label>
-                                {localSettings.discordWebhookUrl && localSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') ? (
-                                    <span className="text-xs font-medium text-green-400 bg-green-900/50 px-2 py-1 rounded-md border border-green-700 flex items-center gap-1"><CheckCircle size={14}/>Setup</span>
-                                ) : (
-                                    <span className="text-xs font-medium text-neutral-500 bg-neutral-700/50 px-2 py-1 rounded-md border border-neutral-600 flex items-center gap-1"><XCircle size={14}/>Not Setup</span>
-                                )}
-                            </div>
-                            <Label htmlFor="discordWebhookUrl" className="text-sm text-neutral-400">Webhook URL</Label>
-                            <Input
-                                id="discordWebhookUrl"
-                                name="discordWebhookUrl"
-                                placeholder="Enter your Discord Webhook URL"
-                                value={localSettings.discordWebhookUrl || ''}
-                                onChange={handleDiscordInputChange} // Use specific handler
-                                className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                                disabled={isSaving || telegramState.isConnecting}
-                            />
-                            <p className="text-xs text-neutral-500">Go to Server Settings &gt; Integrations &gt; Webhooks &gt; New Webhook, then copy the URL.</p>
-                            <div className="flex justify-end gap-2 pt-2">
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => handleTestNotification('discord')}
-                                        disabled={!localSettings.discordWebhookUrl || !localSettings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/') || isTesting !== null || telegramState.isConnecting}
-                                        className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80 hover:text-white disabled:opacity-50"
-                                    >
-                                         {isTesting === 'discord' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                                        Test
-                                    </Button>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                 {/* Delivery Preferences Card */}
-                 <Card className="bg-neutral-800/50 border-neutral-700/50">
+             <Card className="mb-6 bg-neutral-800/50 border-neutral-700/50">
                     <CardHeader>
-                        <div className="flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2z"/>
-                                <path d="M12 2v1"/>
-                                <path d="M12 6v1"/>
-                                <path d="M16.24 7.76l.7-.7"/>
-                                <path d="M18 12h1"/>
-                                <path d="M5 12h1"/>
-                                <path d="M7.06 7.06l.7.7"/>
-                                <rect x="6" y="16" width="12" height="4" rx="1"/>
-                            </svg>
-                        <CardTitle className="text-white font-orbitron">Delivery Preferences</CardTitle>
-                        </div>
-                        <CardDescription className="text-neutral-400 pt-1 pl-7">
-                            Choose how and when you want to receive notifications for different types of alerts.
-                        </CardDescription>
+                    <CardTitle className="text-white font-orbitron">Delivery Preference</CardTitle>
+                    <CardDescription className="text-neutral-400">Choose how quickly you want to receive alerts after a trend is detected.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-6">
-                        {/* General Delivery Preference (Use handleSelectChange) */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-base text-neutral-200">Default Delivery Schedule</Label>
-                                {isSaving && (
-                                    <span className="text-xs text-neutral-400 flex items-center">
-                                        <Loader2 className="mr-1 h-3 w-3 animate-spin"/>
-                                        Saving...
-                                    </span>
-                                )}
-                            </div>
+                 <CardContent>
                             <Select
-                                value={localSettings.deliveryPreference} // Use localSettings
-                                onValueChange={handleSelectChange} // Use specific handler
-                                disabled={isSaving || telegramState.isConnecting}
-                            >
-                                <SelectTrigger className="w-full bg-neutral-700/60 border-neutral-600 text-white focus:ring-trendy-yellow disabled:opacity-70">
-                                    <SelectValue placeholder="Select delivery schedule" />
+                          value={settingsData.deliveryPreference}
+                          onValueChange={handleDeliveryPreferenceChange} // Use direct save handler
+                          disabled={isSaving}
+                      >
+                          <SelectTrigger className="w-full sm:w-[280px] bg-neutral-700/60 border-neutral-600 text-white">
+                             <SelectValue placeholder="Select delivery speed" />
                             </SelectTrigger>
                             <SelectContent className="bg-neutral-800 border-neutral-700 text-neutral-200">
-                                    <SelectItem value="Instantly" className="focus:bg-neutral-700 focus:text-white">
-                                        <div className="flex items-center gap-2">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                                            </svg>
-                                            Instantly (Recommended)
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="Hourly" className="focus:bg-neutral-700 focus:text-white">
-                                        <div className="flex items-center gap-2">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <circle cx="12" cy="12" r="10"/>
-                                                <polyline points="12 6 12 12 16 14"/>
-                                            </svg>
-                                            Hourly Digest
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="Daily" className="focus:bg-neutral-700 focus:text-white">
-                                        <div className="flex items-center gap-2">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                                <line x1="16" y1="2" x2="16" y2="6"/>
-                                                <line x1="8" y1="2" x2="8" y2="6"/>
-                                                <line x1="3" y1="10" x2="21" y2="10"/>
-                                            </svg>
-                                            Daily Digest
-                                        </div>
-                                    </SelectItem>
+                              <SelectItem value="Instantly" className="focus:bg-neutral-700 focus:text-white">Instantly (Recommended)</SelectItem>
+                              <SelectItem value="Hourly Digest" className="focus:bg-neutral-700 focus:text-white">Hourly Digest</SelectItem>
+                              <SelectItem value="Daily Digest" className="focus:bg-neutral-700 focus:text-white">Daily Digest</SelectItem>
                             </SelectContent>
                         </Select>
-                            <div className="text-sm text-neutral-400 space-y-2">
-                                {localSettings.deliveryPreference === 'Instantly' && (
-                                    <p className="flex items-center gap-2">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                                        </svg>
-                                        Receive notifications immediately as events occur
-                                    </p>
-                                )}
-                                {localSettings.deliveryPreference === 'Hourly' && (
-                                    <p className="flex items-center gap-2">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <circle cx="12" cy="12" r="10"/>
-                                            <polyline points="12 6 12 12 16 14"/>
-                                        </svg>
-                                        Receive a summary of notifications every hour
-                                    </p>
-                                )}
-                                {localSettings.deliveryPreference === 'Daily' && (
-                                    <p className="flex items-center gap-2">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-trendy-yellow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                            <line x1="16" y1="2" x2="16" y2="6"/>
-                                            <line x1="8" y1="2" x2="8" y2="6"/>
-                                            <line x1="3" y1="10" x2="21" y2="10"/>
-                                        </svg>
-                                        Receive a daily digest of all notifications
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Quiet Hours (Coming Soon) */}
-                        <div className="space-y-2 opacity-60">
-                            <Label className="text-base text-neutral-200 flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
-                                    <path d="M12 6v6l4 2"/>
-                                </svg>
-                                Quiet Hours
-                                <span className="text-xs text-trendy-yellow bg-trendy-yellow/10 px-2 py-0.5 rounded-full">Coming Soon</span>
-                            </Label>
-                            <p className="text-sm text-neutral-400">Set specific hours when you don't want to receive notifications.</p>
-                        </div>
-
-                        {/* Priority Settings (Coming Soon) */}
-                        <div className="space-y-2 opacity-60">
-                            <Label className="text-base text-neutral-200 flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                    <polyline points="22 4 12 14.01 9 11.01"/>
-                                </svg>
-                                Priority Settings
-                                <span className="text-xs text-trendy-yellow bg-trendy-yellow/10 px-2 py-0.5 rounded-full">Coming Soon</span>
-                            </Label>
-                            <p className="text-sm text-neutral-400">Customize notification priority levels for different types of alerts.</p>
-                        </div>
+                      {isSaving && <Loader2 className="h-4 w-4 animate-spin ml-2 inline-block text-neutral-400"/>}
                     </CardContent>
                 </Card>
-            </div>
+
         </div>
     );
 };

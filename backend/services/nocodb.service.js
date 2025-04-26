@@ -111,17 +111,38 @@ const updateUser = async (userId, dataToUpdate) => {
         throw new Error('Invalid arguments for updateUser');
     }
 
+    // *** ASSUMPTION: NocoDB Primary Key column is named 'Id' ***
+    // Prepare data for bulk update (array with one object)
+    const updatePayload = [{
+        Id: userId,
+        ...dataToUpdate
+    }];
+    
+    const bulkUpdateUrl = '/records';
+
     try {
-        console.log(`Attempting to update user ${userId} with data:`, dataToUpdate);
-        // NocoDB v2 uses PATCH for updates
-        const response = await nocoAxios.patch(`/records`, {
-             Id: userId, // NocoDB identifies record by Id for update
-             ...dataToUpdate
-        });
-        console.log('NocoDB updateUser response:', response.data);
-        return response.data;
+        console.log(`Attempting bulk update for user ${userId} with payload:`, updatePayload);
+        
+        console.log(`[NocoDB UPDATE PRE-FLIGHT (Bulk)] Method: PATCH, URL: ${nocoAxios.defaults.baseURL}${bulkUpdateUrl}, Data:`, updatePayload);
+        
+        // Use Bulk PATCH /records with data in an array
+        const response = await nocoAxios.patch(bulkUpdateUrl, updatePayload); 
+        
+        // NocoDB bulk update might return the updated records in an array
+        console.log('NocoDB updateUser (bulk) response:', response.data);
+        
+        // Check if the response is an array and return the first element (assuming success)
+        if (Array.isArray(response.data) && response.data.length > 0) {
+            return response.data[0];
+        } else {
+            // Fallback or handle unexpected response format
+            console.warn('NocoDB bulk update response format was unexpected. Returning constructed data.');
+            return { Id: userId, ...dataToUpdate };
+        }
+
     } catch (error) {
-        handleNocoError(error, `update user ${userId}`);
+        console.error(`[NocoDB UPDATE FAILED (Bulk PATCH)] Payload:`, updatePayload, ` Status: ${error.response?.status}`, ` Response:`, error.response?.data);
+        handleNocoError(error, `bulk update user ${userId}`);
     }
 };
 
