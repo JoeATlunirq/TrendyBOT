@@ -1,11 +1,11 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
-const http = require('http'); // Keep only http for basic server
+require('dotenv').config(); // <<< RESTORED DOTENV
+const express = require('express'); // <<< RESTORED EXPRESS
+const http = require('http'); // Keep http for server
+const cors = require('cors'); // <<< RESTORED CORS
 
 /* COMMENTED OUT FOR VERCEL DEBUGGING
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
 // const http = require('http'); // Needed for HTTP server
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
@@ -16,12 +16,14 @@ const { errorHandler } = require('./middleware/error.middleware');
 const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker');
 const { initializeWebSocket } = require('./services/websocket.service'); 
 const { initializeDiscordClient } = require('./services/discord.service');
+*/
 
-const app = express();
-const server = http.createServer(app); // Create HTTP server from Express app
+const app = express(); // <<< RESTORED APP CREATION
+const server = http.createServer(app); // <<< RESTORED HTTP SERVER WRAPPER
 
 // --- Middleware ---
-app.use(cors()); 
+app.use(cors()); // <<< RESTORED CORS MIDDLEWARE
+/* COMMENTED OUT FOR VERCEL DEBUGGING
 app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
 app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json()); 
@@ -41,9 +43,10 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use(errorHandler);
 */
 
-// --- Minimal Server for Vercel Debugging ---
+// --- Start Server ---
 const PORT = process.env.PORT || 5001;
 
+/* COMMENTED OUT FOR VERCEL DEBUGGING
 const minimalServer = http.createServer((req, res) => {
   console.log(`Minimal server received request: ${req.method} ${req.url}`);
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -52,6 +55,11 @@ const minimalServer = http.createServer((req, res) => {
 
 minimalServer.listen(PORT, () => {
   console.log(`<<<<< MINIMAL SERVER LISTENING ON PORT ${PORT} >>>>>`); // <<< STARTUP LOG 2
+});
+*/
+
+server.listen(PORT, () => { // <<< RESTORED ORIGINAL SERVER LISTEN
+  console.log(`<<<<< EXPRESS SERVER LISTENING ON PORT ${PORT} >>>>>`); // <<< MODIFIED STARTUP LOG 2
 
   /* COMMENTED OUT FOR VERCEL DEBUGGING
   initializeWebSocket(server); 
