@@ -1,9 +1,12 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
+const http = require('http'); // Keep only http for basic server
+
+/* COMMENTED OUT FOR VERCEL DEBUGGING
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const http = require('http'); // Needed for HTTP server
+// const http = require('http'); // Needed for HTTP server
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const youtubeRoutes = require('./routes/youtube.routes');
@@ -36,12 +39,21 @@ app.use('/api/subscriptions', subscriptionRoutes);
 
 // --- Error Handling ---
 app.use(errorHandler);
+*/
 
-// --- Start Server & Scheduler ---
+// --- Minimal Server for Vercel Debugging ---
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  
+
+const minimalServer = http.createServer((req, res) => {
+  console.log(`Minimal server received request: ${req.method} ${req.url}`);
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Minimal Server OK');
+});
+
+minimalServer.listen(PORT, () => {
+  console.log(`<<<<< MINIMAL SERVER LISTENING ON PORT ${PORT} >>>>>`); // <<< STARTUP LOG 2
+
+  /* COMMENTED OUT FOR VERCEL DEBUGGING
   initializeWebSocket(server); 
   console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 2
   initializeDiscordClient();
@@ -55,6 +67,9 @@ server.listen(PORT, () => {
   }
 
   scheduleTrialCheck();
+  */
 });
 
+/* COMMENTED OUT FOR VERCEL DEBUGGING
 module.exports = app; 
+*/ 
