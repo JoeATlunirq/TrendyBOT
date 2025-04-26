@@ -57,9 +57,11 @@ const getInitialTab = (): string => {
     return (hash === 'account' || hash === 'billing') ? hash : 'account';
 };
 
+const API_BASE_URL = BACKEND_API_BASE_URL; // Added for consistency
+
 const Settings = () => {
     // Pass updateUserContext from useAuth
-    const { user, token, logout, currentPlan, updateUserContext, isTwoFactorEnabled, isTrialUsed, trialExpiresAt } = useAuth(); 
+    const { user, token, logout, updateUserContext, currentPlan, isTwoFactorEnabled, isTrialUsed, trialExpiresAt } = useAuth(); 
     const { toast } = useToast();
     const navigate = useNavigate();
     const [profileName, setProfileName] = useState('');
@@ -83,6 +85,8 @@ const Settings = () => {
     const [isSettingUp2FA, setIsSettingUp2FA] = useState(false);
     const [isVerifying2FA, setIsVerifying2FA] = useState(false);
     const [secretCopied, setSecretCopied] = useState(false);
+    const [avatarSignedUrl, setAvatarSignedUrl] = useState<string | null>(null); // State for signed URL
+    const [isFetchingAvatarUrl, setIsFetchingAvatarUrl] = useState(false); // Loading state
 
     // Ref for hidden file input
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,77 +99,77 @@ const Settings = () => {
         return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || email || 'User')}&background=404040&color=e5e5e5&bold=true`;
     };
 
+    // --- Fetch Signed URL Function (extracted) ---
+    const fetchAvatarUrl = useCallback(async () => {
+        if (!token) {
+            setAvatarSignedUrl(null); 
+            return;
+        }
+        setIsFetchingAvatarUrl(true);
+        try {
+            const response = await axios.get(`${API_BASE_URL}/users/avatar-url`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setAvatarSignedUrl(response.data?.signedUrl || null); // Use null if no URL
+        } catch (error) {
+            console.error("Error fetching avatar signed URL:", error);
+            setAvatarSignedUrl(null); 
+        } finally {
+            setIsFetchingAvatarUrl(false);
+        }
+    }, [token]); // Depends only on token
+
+    // --- Fetch Signed URL on Mount/Token Change ---
+    useEffect(() => {
+        fetchAvatarUrl();
+    }, [fetchAvatarUrl]); // Run when fetchAvatarUrl function reference changes (which is stable due to useCallback)
+
     useEffect(() => {
         if (user) {
             setProfileName(user[NAME_COLUMN] || '');
             setCompanyName(user[COMPANY_COLUMN] || '');
+            // Fetch avatar URL when user context loads/changes as well
+            // fetchAvatarUrl(); // Re-fetching based on user might cause loops if user updates frequently
         } 
-    }, [user]);
-
-    // --- Effect to ensure hash is valid after mount (handles initial invalid hash) --- 
-    useEffect(() => {
-        const currentHashValue = window.location.hash.replace('#', '');
-        // If the hash is currently invalid or missing, force it to the activeTab (which defaults to 'account')
-        if (currentHashValue !== activeTab) {
-             window.location.hash = activeTab; 
-        }
-        // Optional: Add event listener for manual hash changes if needed, though Tabs component handles clicks
-        // const handleHashChange = () => { ... setActiveTab(newHash) ... };
-        // window.addEventListener('hashchange', handleHashChange);
-        // return () => window.removeEventListener('hashchange', handleHashChange);
-
-    }, [activeTab]); // Re-run if activeTab changes programmatically? Or keep empty []? Let's stick with activeTab for now.
+    }, [user]); // Removed fetchAvatarUrl from here
 
     // --- Update Profile Handler - Also use updateUserContext ---
-    const handleProfileUpdate = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleProfileUpdate = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
         if (!token || !user) return;
-        setIsProfileLoading(true);
 
-        // Determine which fields have actually changed
-        const updatedFields: { [key: string]: any } = {}; 
-        const originalName = user[NAME_COLUMN] || '';
-        const originalCompany = user[COMPANY_COLUMN] || '';
-
-        if (profileName !== originalName) {
+        const updatedFields: Record<string, any> = {};
+        if (profileName !== user[NAME_COLUMN]) {
             updatedFields[NAME_COLUMN] = profileName;
         }
-        if (companyName !== originalCompany) {
+        if (companyName !== user[COMPANY_COLUMN]) {
             updatedFields[COMPANY_COLUMN] = companyName;
         }
 
-        // If nothing changed, inform the user and exit
         if (Object.keys(updatedFields).length === 0) {
-            toast({ title: "No Changes", description: "You haven't made any changes to save." });
-            setIsProfileLoading(false);
+            toast({ title: "No Changes", description: "Profile information is already up to date.", variant: "default" });
             return;
         }
 
-        // --- DEBUG LOG --- 
-        console.log("[handleProfileUpdate] Sending updatedFields:", JSON.stringify(updatedFields));
-        // --------------- 
-
         try {
             const response = await axios.put(
-                `${BACKEND_API_BASE_URL}/users/profile`,
-                updatedFields, // Send only changed fields
+                `${API_BASE_URL}/users/profile`,
+                updatedFields,
                 { headers: { 'Authorization': `Bearer ${token}` }}
             );
 
             toast({ title: "Profile Updated", description: response.data?.message || "Your profile has been saved." });
             
             // Update context immediately with the changes sent
+            // Keep this call for name/company updates
             updateUserContext(updatedFields); 
             
-            // Note: Backend response might contain the full updated user 
-            // if (response.data?.user) { ... } - but updating context directly is faster UI feedback
+            // Note: Backend response might contain the full updated user object,
+            // which could be used for a more robust update, but this works for now.
 
         } catch (error: any) {
-            const message = error.response?.data?.message || "Failed to update profile.";
-            toast({ title: "Update Failed", description: message, variant: "destructive" });
-            console.error("Profile update error:", error.response?.data || error);
-        } finally {
-            setIsProfileLoading(false);
+            console.error("Error updating profile:", error);
+            toast({ title: "Update Error", description: error.response?.data?.message || "Failed to update profile.", variant: "destructive" });
         }
     };
 
@@ -226,13 +230,10 @@ const Settings = () => {
         fileInputRef.current?.click();
     };
 
-    // --- Handle File Selection and Upload ---
+    // --- Handle File Selection and Upload (MODIFIED SUCCESS) ---
     const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file) {
-            return; // No file selected
-        }
-        if (!token) return; // Should be logged in
+        if (!file || !token) return;
 
         // Optional: Client-side validation (example)
         if (!file.type.startsWith('image/')) {
@@ -248,41 +249,26 @@ const Settings = () => {
         formData.append('avatar', file);
 
         setIsPhotoUploading(true);
-
         try {
             const response = await axios.put(
-                `${BACKEND_API_BASE_URL}/users/profile/photo`,
+                `${API_BASE_URL}/users/profile/photo`,
                 formData,
                 { headers: { 'Authorization': `Bearer ${token}` }}
             );
 
-            // --- SIMPLIFIED SUCCESS HANDLING ---
-            if (response.data?.photoUrl) {
-                const fullGcsUrl = response.data.photoUrl; // Backend sends the full URL now
-                console.log("[Photo Upload] Received GCS URL:", fullGcsUrl);
-
-                // Validate if it looks like a URL (basic check)
-                if (typeof fullGcsUrl === 'string' && fullGcsUrl.startsWith('https://')) {
-                    // 1. Update AuthContext immediately with the new full URL
-                    updateUserContext({ [PROFILE_PHOTO_URL_COLUMN]: fullGcsUrl });
-
-                    // 2. Update localStorage with the new full URL
-                    if (user) {
-                        const updatedUser = { ...user, [PROFILE_PHOTO_URL_COLUMN]: fullGcsUrl };
-                        localStorage.setItem('trendy_user', JSON.stringify(updatedUser));
-                    }
-
-                    toast({ title: "Photo Updated", description: response.data.message || "Your profile photo has been updated." });
-                } else {
-                    // Handle case where the received URL is invalid
-                    console.error("[Photo Upload] Invalid URL received from backend:", fullGcsUrl);
-                    toast({ title: "Update Error", description: "Received an invalid photo URL from the server.", variant: "destructive" });
-                }
-                // --- END SIMPLIFIED HANDLING ---
-
+            // --- MODIFIED SUCCESS HANDLING ---
+            if (response.data?.photoPath) { // Check for photoPath from backend
+                toast({ title: "Photo Uploaded", description: response.data.message || "Processing complete." });
+                // Instead of updating context directly, trigger a refetch of the signed URL
+                fetchAvatarUrl(); 
+                // Note: We don't update the user context here with the path,
+                // as the display components rely solely on the fetched signed URL.
+                // The underlying user object in AuthContext still holds the old path until next login/refresh.
+                // This is a trade-off for simplicity with signed URLs.
             } else {
-                throw new Error("Invalid response from server during photo upload (missing photoUrl).");
+                throw new Error("Invalid response from server during photo upload (missing photoPath).");
             }
+            // --- END MODIFIED HANDLING ---
 
         } catch (error: any) {
             const message = error.response?.data?.message || "Failed to upload photo.";
@@ -290,7 +276,6 @@ const Settings = () => {
             console.error("Photo upload error:", error.response?.data || error);
         } finally {
             setIsPhotoUploading(false);
-            // Reset file input value so the same file can be selected again if needed
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -513,9 +498,8 @@ const Settings = () => {
         return <div className="p-4">Please log in to view settings.</div>;
     }
 
-    // --- DEBUG LOG --- 
-    console.log("[Render] Rendering Settings component. displayPhotoUrl:", user[PROFILE_PHOTO_URL_COLUMN]);
-    // --------------- 
+    // --- DEBUG LOG - Use state variable ---
+    console.log("[Render] Rendering Settings component. avatarSignedUrl:", avatarSignedUrl); 
 
     return (
         <div className="container mx-auto py-8 px-4 md:px-6 max-w-5xl">
@@ -558,44 +542,30 @@ const Settings = () => {
                                             accept="image/png, image/jpeg, image/gif" // Specify accepted types
                                             style={{ display: 'none' }} 
                                         />
-                                        {/* Display Image - SIMPLIFIED */}
-                                        {(() => {
-                                            // Directly get URL from context
-                                            const photoUrl = user?.[PROFILE_PHOTO_URL_COLUMN];
-                                            let displaySrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
-
-                                            // Use the GCS/valid URL if available
-                                            if (photoUrl && typeof photoUrl === 'string' && (photoUrl.startsWith('http://') || photoUrl.startsWith('https://'))) {
-                                                displaySrc = photoUrl;
-                                            }
-                                            
-                                            // Render the img tag
-                                            return (
-                                                <img 
-                                                    key={displaySrc} // Use src as key to help React notice changes
-                                                    src={displaySrc} 
-                                                    alt="Profile Avatar" 
-                                                    className="w-16 h-16 rounded-full bg-neutral-600 object-cover border-2 border-neutral-600"
-                                                    onError={(e) => { 
-                                                        const target = e.target as HTMLImageElement;
-                                                        const fallbackSrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
-                                                        if (target.src !== fallbackSrc) {
-                                                            target.onerror = null; // prevent infinite loop only if not already fallback
-                                                            target.src = fallbackSrc; // Use helper
-                                                        }
-                                                    }}
-                                                />
-                                            );
-                                        })()}
+                                        {/* Display Image - Use state variable */}
+                                        <img 
+                                            key={avatarSignedUrl || 'fallback'} // Use signed URL for key
+                                            src={isFetchingAvatarUrl ? generateFallbackAvatar(undefined, undefined) : (avatarSignedUrl || generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]))} 
+                                            alt="Profile Avatar" 
+                                            className="w-16 h-16 rounded-full bg-neutral-600 object-cover border-2 border-neutral-600"
+                                            onError={(e) => { 
+                                                const target = e.target as HTMLImageElement;
+                                                const fallbackSrc = generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]);
+                                                if (target.src !== fallbackSrc) {
+                                                    target.onerror = null; // prevent infinite loop only if not already fallback
+                                                    target.src = fallbackSrc; // Use helper
+                                                }
+                                            }}
+                                        />
                                         {/* Change Photo Button */}
                                         <Button 
                                             variant="outline" 
                                             type="button" 
                                             onClick={handleChangePhotoClick} 
-                                            disabled={isPhotoUploading} // Use loading state
+                                            disabled={isPhotoUploading || isFetchingAvatarUrl} // Disable while fetching/uploading
                                             className="border-neutral-600 bg-neutral-700/60 text-neutral-300 hover:bg-neutral-600/80"
                                         >
-                                            {isPhotoUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                            {isPhotoUploading || isFetchingAvatarUrl ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                                             Change Photo
                                         </Button>
                                     </div>
