@@ -1,7 +1,7 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
 // require('dotenv').config(); // Commented out for testing
-const express = require('express');
+// const express = require('express');
 // const cors = require('cors'); // Commented out for testing
 // const http = require('http'); // Commented out for testing
 // const authRoutes = require('./routes/auth.routes'); // Commented out for testing
@@ -14,7 +14,7 @@ const express = require('express');
 // const { initializeWebSocket } = require('./services/websocket.service'); // Commented out for testing
 // const { initializeDiscordClient } = require('./services/discord.service'); // Commented out for testing
 
-const app = express();
+// const app = express();
 // const server = http.createServer(app); // Commented out for testing
 
 // --- Middleware ---
@@ -25,10 +25,10 @@ const app = express();
 // app.use('/uploads', express.static('public/uploads')); // Commented out for testing
 
 // --- Routes ---
-app.get('/', (req, res) => {
-  console.log('<<<<< / endpoint hit >>>>>'); // Log when root is hit
-  res.send('Trendy.bot Backend Simplified Test Running');
-});
+// app.get('/', (req, res) => { // Commented out - testing bare script
+//   console.log('<<<<< / endpoint hit >>>>>'); 
+//   res.send('Trendy.bot Backend Simplified Test Running');
+// });
 // app.use('/api/auth', authRoutes); // Commented out for testing
 // app.use('/api/users', userRoutes); // Commented out for testing
 // app.use('/api/youtube', youtubeRoutes); // Commented out for testing
@@ -39,17 +39,19 @@ app.get('/', (req, res) => {
 // app.use(errorHandler); // Commented out for testing
 
 // --- Start Server & Scheduler ---
-const PORT = process.env.PORT || 5001;
+// const PORT = process.env.PORT || 5001; // Commented out - testing bare script
 
 // Use app.listen directly for simplicity in testing
-app.listen(PORT, () => {
-  console.log(`<<<<< SIMPLIFIED Server running on port ${PORT} >>>>>`); // <<< STARTUP LOG 2 (Simplified)
-  
-  // --- Initializations Commented Out ---
-  // initializeWebSocket(server);
-  // console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
-  // initializeDiscordClient();
-  // scheduleTrialCheck();
-});
+// app.listen(PORT, () => { // Commented out - testing bare script
+//   console.log(`<<<<< SIMPLIFIED Server running on port ${PORT} >>>>>`);
+//   
+//   // --- Initializations Commented Out ---
+//   // initializeWebSocket(server);
+//   // console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
+//   // initializeDiscordClient();
+//   // scheduleTrialCheck();
+// });
 
-module.exports = app; // Uncommented for Vercel test 
+console.log('<<<<< SERVER.JS Reached End (No Express) >>>>>'); // <<< END LOG
+
+// module.exports = app; // Keep commented out 
