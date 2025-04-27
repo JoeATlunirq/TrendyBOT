@@ -40,8 +40,18 @@ const initializeDiscordClient = () => {
     });
 
     // Login to Discord with your client's token
-    client.login(token).catch(err => {
-        console.error('Failed to login Discord Bot:', err);
+    const loginTimeout = 15000; // 15 seconds
+    Promise.race([
+        client.login(token),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Login timed out')), loginTimeout))
+    ])
+    .then(() => {
+        // This block executes if login succeeds (though we already have the 'ready' event handler)
+        console.log('Discord client login promise resolved.'); 
+    })
+    .catch(err => {
+        // Log the *entire* error object to get more details
+        console.error('<<<<< FAILED TO LOGIN DISCORD BOT (or Timed Out) >>>>>', JSON.stringify(err, Object.getOwnPropertyNames(err))); 
         client = null; // Reset client on login failure
     });
 
