@@ -52,4 +52,4 @@ app.listen(PORT, () => {
   // scheduleTrialCheck();
 });
 
-// module.exports = app; // Commented out for testing 
+module.exports = app; // Uncommented for Vercel test 
