@@ -26,8 +26,15 @@ const initializeDiscordClient = () => {
     });
 
     client.once('ready', () => {
-        isClientReady = true;
-        console.log(`Discord Bot logged in as ${client.user?.tag}! Ready to send DMs.`);
+        // Check if client and user exist before logging
+        if (client && client.user) { 
+            isClientReady = true;
+            console.log(`Discord Bot logged in as ${client.user.tag}! Ready to send DMs.`);
+        } else {
+            // This case should ideally not happen if login fails cleanly, but good for safety
+            console.warn('Discord client \'ready\' event fired, but client or client.user is null. Login likely failed previously.');
+            isClientReady = false; 
+        }
     });
 
     client.on('error', (error) => {

@@ -2,51 +2,51 @@ console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
 require('dotenv').config(); // Uncommented
 const express = require('express');
-// const cors = require('cors'); // Commented out for testing
-// const http = require('http'); // Commented out for testing
-// const authRoutes = require('./routes/auth.routes'); // Commented out for testing
-// const userRoutes = require('./routes/user.routes'); // Commented out for testing
-// const youtubeRoutes = require('./routes/youtube.routes'); // Commented out for testing
-// const paypalRoutes = require('./routes/paypal.routes'); // Commented out for testing
-// const subscriptionRoutes = require('./routes/subscription.routes'); // Commented out for testing
-// const { errorHandler } = require('./middleware/error.middleware'); // Commented out for testing
-// const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker'); // Commented out for testing
-// const { initializeWebSocket } = require('./services/websocket.service'); // Commented out for testing
-const { initializeDiscordClient } = require('./services/discord.service'); // Uncommented
+const cors = require('cors'); // Uncommented
+const http = require('http'); // Uncommented (though might not be needed if Vercel handles HTTP)
+const authRoutes = require('./routes/auth.routes'); // Uncommented
+const userRoutes = require('./routes/user.routes'); // Uncommented
+const youtubeRoutes = require('./routes/youtube.routes'); // Uncommented
+const paypalRoutes = require('./routes/paypal.routes'); // Uncommented
+const subscriptionRoutes = require('./routes/subscription.routes'); // Uncommented
+const { errorHandler } = require('./middleware/error.middleware'); // Uncommented
+const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker'); // Uncommented
+const { initializeWebSocket } = require('./services/websocket.service'); // Uncommented
+const { initializeDiscordClient } = require('./services/discord.service'); // Already Uncommented
 
 const app = express();
-// const server = http.createServer(app); // Commented out for testing
+const server = http.createServer(app); // Uncommented (Needed for WebSocket)
 
 // --- Middleware ---
-// app.use(cors()); // Commented out for testing
-// app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' })); // Commented out for testing
-// app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' })); // Commented out for testing
-// app.use(express.json()); // Commented out for testing
-// app.use('/uploads', express.static('public/uploads')); // Commented out for testing
+app.use(cors()); // Uncommented
+app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' })); // Uncommented
+app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' })); // Uncommented
+app.use(express.json()); // Uncommented
+app.use('/uploads', express.static('public/uploads')); // Uncommented
 
 // --- Routes ---
-app.get('/', (req, res) => { // Uncommented basic route
+app.get('/', (req, res) => { // Keep basic route for testing if needed
   console.log('<<<<< / endpoint hit >>>>>'); 
-  res.send('Trendy.bot Backend Minimal Express Test Running');
+  res.send('Trendy.bot Backend Running - Full');
 });
-// app.use('/api/auth', authRoutes); // Commented out for testing
-// app.use('/api/users', userRoutes); // Commented out for testing
-// app.use('/api/youtube', youtubeRoutes); // Commented out for testing
-// app.use('/api/paypal', paypalRoutes); // Commented out for testing
-// app.use('/api/subscriptions', subscriptionRoutes); // Commented out for testing
+app.use('/api/auth', authRoutes); // Uncommented
+app.use('/api/users', userRoutes); // Uncommented
+app.use('/api/youtube', youtubeRoutes); // Uncommented
+app.use('/api/paypal', paypalRoutes); // Uncommented
+app.use('/api/subscriptions', subscriptionRoutes); // Uncommented
 
 // --- Error Handling ---
-// app.use(errorHandler); // Commented out for testing
+app.use(errorHandler); // Uncommented
 
 // --- Start Server & Initializations ---
 
-// Vercel handles listening, do not call app.listen()
+// Vercel handles listening, do not call app.listen() or server.listen()
+// const PORT = process.env.PORT || 5001; 
+// server.listen(PORT, () => { ... }); // KEEP LISTEN COMMENTED OUT
 
-console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // Add this log back
-initializeDiscordClient(); // Uncommented
+initializeWebSocket(server); // Initialize WebSocket with the HTTP server
+console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
+initializeDiscordClient(); 
+scheduleTrialCheck(); // Uncommented
 
-// scheduleTrialCheck(); // Keep commented
-
-// console.log('<<<<< SERVER.JS Reached End (No Express) >>>>>'); // Remove this log
-
-module.exports = app; // EXPORT the app for Vercel 
+module.exports = server; // Export the HTTP server for Vercel (needed for WebSocket) 
