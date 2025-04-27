@@ -45,8 +45,8 @@ app.use(errorHandler); // Uncommented
 // server.listen(PORT, () => { ... }); // KEEP LISTEN COMMENTED OUT
 
 initializeWebSocket(server); // Initialize WebSocket with the HTTP server
-console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
-initializeDiscordClient(); 
+// console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // No longer call here
+// initializeDiscordClient(); // No longer call here
 scheduleTrialCheck(); // Uncommented
 
 module.exports = server; // Export the HTTP server for Vercel (needed for WebSocket) 
