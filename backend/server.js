@@ -1,7 +1,7 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
 // require('dotenv').config(); // Commented out for testing
-// const express = require('express');
+const express = require('express');
 // const cors = require('cors'); // Commented out for testing
 // const http = require('http'); // Commented out for testing
 // const authRoutes = require('./routes/auth.routes'); // Commented out for testing
@@ -14,7 +14,7 @@ console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 // const { initializeWebSocket } = require('./services/websocket.service'); // Commented out for testing
 // const { initializeDiscordClient } = require('./services/discord.service'); // Commented out for testing
 
-// const app = express();
+const app = express();
 // const server = http.createServer(app); // Commented out for testing
 
 // --- Middleware ---
@@ -25,10 +25,10 @@ console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 // app.use('/uploads', express.static('public/uploads')); // Commented out for testing
 
 // --- Routes ---
-// app.get('/', (req, res) => { // Commented out - testing bare script
-//   console.log('<<<<< / endpoint hit >>>>>'); 
-//   res.send('Trendy.bot Backend Simplified Test Running');
-// });
+app.get('/', (req, res) => { // Uncommented basic route
+  console.log('<<<<< / endpoint hit >>>>>'); 
+  res.send('Trendy.bot Backend Minimal Express Test Running');
+});
 // app.use('/api/auth', authRoutes); // Commented out for testing
 // app.use('/api/users', userRoutes); // Commented out for testing
 // app.use('/api/youtube', youtubeRoutes); // Commented out for testing
@@ -54,4 +54,4 @@ console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
 console.log('<<<<< SERVER.JS Reached End (No Express) >>>>>'); // <<< END LOG
 
-// module.exports = app; // Keep commented out 
+module.exports = app; // EXPORT the app for Vercel 
