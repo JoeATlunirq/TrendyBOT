@@ -1,6 +1,6 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
-// require('dotenv').config(); // Commented out for testing
+require('dotenv').config(); // Uncommented
 const express = require('express');
 // const cors = require('cors'); // Commented out for testing
 // const http = require('http'); // Commented out for testing
@@ -12,7 +12,7 @@ const express = require('express');
 // const { errorHandler } = require('./middleware/error.middleware'); // Commented out for testing
 // const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker'); // Commented out for testing
 // const { initializeWebSocket } = require('./services/websocket.service'); // Commented out for testing
-// const { initializeDiscordClient } = require('./services/discord.service'); // Commented out for testing
+const { initializeDiscordClient } = require('./services/discord.service'); // Uncommented
 
 const app = express();
 // const server = http.createServer(app); // Commented out for testing
@@ -38,20 +38,15 @@ app.get('/', (req, res) => { // Uncommented basic route
 // --- Error Handling ---
 // app.use(errorHandler); // Commented out for testing
 
-// --- Start Server & Scheduler ---
-// const PORT = process.env.PORT || 5001; // Commented out - testing bare script
+// --- Start Server & Initializations ---
 
-// Use app.listen directly for simplicity in testing
-// app.listen(PORT, () => { // Commented out - testing bare script
-//   console.log(`<<<<< SIMPLIFIED Server running on port ${PORT} >>>>>`);
-//   
-//   // --- Initializations Commented Out ---
-//   // initializeWebSocket(server);
-//   // console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
-//   // initializeDiscordClient();
-//   // scheduleTrialCheck();
-// });
+// Vercel handles listening, do not call app.listen()
 
-console.log('<<<<< SERVER.JS Reached End (No Express) >>>>>'); // <<< END LOG
+console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // Add this log back
+initializeDiscordClient(); // Uncommented
+
+// scheduleTrialCheck(); // Keep commented
+
+// console.log('<<<<< SERVER.JS Reached End (No Express) >>>>>'); // Remove this log
 
 module.exports = app; // EXPORT the app for Vercel 
