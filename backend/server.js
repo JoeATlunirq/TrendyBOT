@@ -1,53 +1,55 @@
 console.log('<<<<< SERVER.JS STARTED >>>>>'); // <<< STARTUP LOG 1
 
-require('dotenv').config();
+// require('dotenv').config(); // Commented out for testing
 const express = require('express');
-const http = require('http'); // Needed for HTTP server
-// const cors = require('cors');
-// const authRoutes = require('./routes/auth.routes');
-// const userRoutes = require('./routes/user.routes');
-// const youtubeRoutes = require('./routes/youtube.routes');
-// const paypalRoutes = require('./routes/paypal.routes');
-// const subscriptionRoutes = require('./routes/subscription.routes');
-// const { errorHandler } = require('./middleware/error.middleware');
-// const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker');
-// const { initializeWebSocket } = require('./services/websocket.service'); 
-// const { initializeDiscordClient } = require('./services/discord.service');
+// const cors = require('cors'); // Commented out for testing
+// const http = require('http'); // Commented out for testing
+// const authRoutes = require('./routes/auth.routes'); // Commented out for testing
+// const userRoutes = require('./routes/user.routes'); // Commented out for testing
+// const youtubeRoutes = require('./routes/youtube.routes'); // Commented out for testing
+// const paypalRoutes = require('./routes/paypal.routes'); // Commented out for testing
+// const subscriptionRoutes = require('./routes/subscription.routes'); // Commented out for testing
+// const { errorHandler } = require('./middleware/error.middleware'); // Commented out for testing
+// const { scheduleTrialCheck } = require('./scheduler/trialExpiryChecker'); // Commented out for testing
+// const { initializeWebSocket } = require('./services/websocket.service'); // Commented out for testing
+// const { initializeDiscordClient } = require('./services/discord.service'); // Commented out for testing
 
 const app = express();
-const server = http.createServer(app); // Create HTTP server from Express app
+// const server = http.createServer(app); // Commented out for testing
 
 // --- Middleware ---
-// app.use(cors()); 
-// app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
-// app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json()); 
-// app.use('/uploads', express.static('public/uploads')); 
+// app.use(cors()); // Commented out for testing
+// app.use('/api/paypal/webhook', express.raw({ type: 'application/json', limit: '10mb' })); // Commented out for testing
+// app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' })); // Commented out for testing
+// app.use(express.json()); // Commented out for testing
+// app.use('/uploads', express.static('public/uploads')); // Commented out for testing
 
 // --- Routes ---
 app.get('/', (req, res) => {
-  console.log('<<<<< ROOT ROUTE HIT >>>>>');
-  res.send('Trendy.bot Backend Running - Minimal Test');
+  console.log('<<<<< / endpoint hit >>>>>'); // Log when root is hit
+  res.send('Trendy.bot Backend Simplified Test Running');
 });
-// app.use('/api/auth', authRoutes);
-// app.use('/api/users', userRoutes);
-// app.use('/api/youtube', youtubeRoutes);
-// app.use('/api/paypal', paypalRoutes);
-// app.use('/api/subscriptions', subscriptionRoutes);
+// app.use('/api/auth', authRoutes); // Commented out for testing
+// app.use('/api/users', userRoutes); // Commented out for testing
+// app.use('/api/youtube', youtubeRoutes); // Commented out for testing
+// app.use('/api/paypal', paypalRoutes); // Commented out for testing
+// app.use('/api/subscriptions', subscriptionRoutes); // Commented out for testing
 
 // --- Error Handling ---
-// app.use(errorHandler);
+// app.use(errorHandler); // Commented out for testing
 
 // --- Start Server & Scheduler ---
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => {
-  console.log(`<<<<< SERVER LISTENING on port ${PORT} >>>>>`); // <<< STARTUP LOG 3
+
+// Use app.listen directly for simplicity in testing
+app.listen(PORT, () => {
+  console.log(`<<<<< SIMPLIFIED Server running on port ${PORT} >>>>>`); // <<< STARTUP LOG 2 (Simplified)
   
-  // initializeWebSocket(server); 
-  // console.log('<<<<< CALLING initializeDiscordClient >>>>>'); // <<< STARTUP LOG 2
+  // --- Initializations Commented Out ---
+  // initializeWebSocket(server);
+  // console.log('<<<<< CALLING initializeDiscordClient >>>>>'); 
   // initializeDiscordClient();
-  
   // scheduleTrialCheck();
 });
 
-module.exports = app; 
+// module.exports = app; // Commented out for testing 
