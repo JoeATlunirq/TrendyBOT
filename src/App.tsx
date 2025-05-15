@@ -16,7 +16,7 @@ import TrendDetail from "@/pages/TrendDetail";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
 import Landing from "@/pages/Landing";
-import History from "@/pages/History";
+import ResearchPage from "@/pages/ResearchPage";
 import AlertPreferences from "@/pages/AlertPreferences";
 import AlertTemplates from "@/pages/AlertTemplates";
 import NotificationSettings from "@/pages/NotificationSettings";
@@ -108,7 +108,7 @@ const AppRoutes = () => (
         <Route path="/dashboard" element={<Navigate to="/trending" replace />} />
         <Route path="/trending" element={<Trending />} />
         <Route path="/trending/:id" element={<TrendDetail />} />
-        <Route path="/history" element={<History />} />
+        <Route path="/research" element={<ResearchPage />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/alert-preferences" element={<AlertPreferences />} />
         <Route path="/alert-templates" element={<AlertTemplates />} />

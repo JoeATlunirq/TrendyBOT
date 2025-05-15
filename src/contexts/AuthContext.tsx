@@ -16,50 +16,35 @@ const getAuthApiBaseUrl = () => {
 const AUTH_API_URL = getAuthApiBaseUrl();
 
 // --- Configuration ---
-// Use environment variable for the column name
 const ONBOARDING_COLUMN_NAME = import.meta.env.VITE_ONBOARDING_COLUMN || 'onboarding_complete';
-// Add subscription column names (match backend .env / NocoDB)
 const CURRENT_PLAN_COLUMN = import.meta.env.VITE_CURRENT_PLAN_COLUMN || 'current_plan';
-const PAYPAL_SUB_ID_COLUMN = import.meta.env.VITE_PAYPAL_SUB_ID_COLUMN || 'paypal_subscription_id';
-const SUB_STATUS_COLUMN = import.meta.env.VITE_SUB_STATUS_COLUMN || 'subscription_status';
-// Add 2FA column constant
 const TWO_FACTOR_ENABLED_COLUMN = import.meta.env.VITE_2FA_ENABLED_COLUMN || 'is_two_factor_enabled';
-const TRIAL_STARTED_AT_COLUMN = import.meta.env.VITE_TRIAL_STARTED_AT_COLUMN || 'trial_started_at';
-const TRIAL_EXPIRES_AT_COLUMN = import.meta.env.VITE_TRIAL_EXPIRES_AT_COLUMN || 'trial_expires_at';
-const IS_TRIAL_USED_COLUMN = import.meta.env.VITE_IS_TRIAL_USED_COLUMN || 'is_trial_used';
 
 // --- Types ---
-// Export User type so it can be imported elsewhere
 export type User = {
   Id: string; 
-  // Use the actual column name from NocoDB
   Emails: string;
-  // Allow any other properties (less type-safe but avoids linter issue)
   [key: string]: any; 
 };
 
 export type AuthContextType = {
   user: User | null;
-  token: string | null; // Store the JWT
+  token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  currentPlan: string | null; // Add currentPlan state
-  isTelegramVerified: boolean; // Add Telegram status
-  telegramChatId: string | null; // Add Telegram Chat ID
-  isTwoFactorEnabled: boolean; // From user record
-  is2FARequired: boolean; // <-- Add: Is 2FA code input required now?
-  isVerifying2FA: boolean; // <-- Add: Loading state for 2FA verification
-  isTrialUsed: boolean;
-  trialStartedAt: Date | null;
-  trialExpiresAt: Date | null;
+  currentPlan: string | null;
+  isTelegramVerified: boolean;
+  telegramChatId: string | null;
+  isTwoFactorEnabled: boolean;
+  is2FARequired: boolean;
+  isVerifying2FA: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name: string) => Promise<void>;
+  signup: (email: string, password: string, name: string, accessCode: string) => Promise<void>;
   logout: () => void;
   updateUserContext: (updatedFields: Partial<User>) => void; 
-  submit2FACode: (code: string) => Promise<void>; // <-- Add: Function to submit 2FA code
-  cancel2FA: () => void; // <-- Add: Function to cancel 2FA step
+  submit2FACode: (code: string) => Promise<void>;
+  cancel2FA: () => void;
 };
-
 
 // --- Context ---
 const AuthContext = createContext<AuthContextType>({
@@ -67,50 +52,38 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   isLoading: true,
   isAuthenticated: false,
-  currentPlan: null, // Default value
+  currentPlan: null,
   isTelegramVerified: false,
   telegramChatId: null,
-  isTwoFactorEnabled: false, // Add default
-  is2FARequired: false, // <-- Add default
-  isVerifying2FA: false, // <-- Add default
-  isTrialUsed: false,
-  trialStartedAt: null,
-  trialExpiresAt: null,
+  isTwoFactorEnabled: false,
+  is2FARequired: false,
+  isVerifying2FA: false,
   login: async () => {},
   signup: async () => {},
   logout: () => {},
-  updateUserContext: () => {}, // Add default no-op function
-  submit2FACode: async () => {}, // <-- Add default
-  cancel2FA: () => {}, // <-- Add default
+  updateUserContext: () => {},
+  submit2FACode: async () => {},
+  cancel2FA: () => {},
 });
 
 // --- Hook ---
 export const useAuth = () => useContext(AuthContext);
 
-
 // --- Provider ---
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null); // Add token state
-  const [currentPlan, setCurrentPlan] = useState<string | null>(null); // Add state
-  // Add Telegram state to AuthProvider
+  const [token, setToken] = useState<string | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const [isTelegramVerified, setIsTelegramVerified] = useState<boolean>(false);
   const [telegramChatId, setTelegramChatId] = useState<string | null>(null);
-  const [isTwoFactorEnabled, setIsTwoFactorEnabled] = useState<boolean>(false); // Add 2FA state
+  const [isTwoFactorEnabled, setIsTwoFactorEnabled] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(true);
-  // --- ADD 2FA Login State ---
   const [is2FARequired, setIs2FARequired] = useState<boolean>(false);
   const [pending2FAUserId, setPending2FAUserId] = useState<string | null>(null);
   const [isVerifying2FA, setIsVerifying2FA] = useState<boolean>(false);
-  // --- Add Trial State Variables ---
-  const [isTrialUsed, setIsTrialUsed] = useState<boolean>(false);
-  const [trialStartedAt, setTrialStartedAt] = useState<Date | null>(null);
-  const [trialExpiresAt, setTrialExpiresAt] = useState<Date | null>(null);
-  // --------------------------
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Update checkAuth to load Telegram status from user object
   useEffect(() => {
     const checkAuth = () => {
       const storedToken = localStorage.getItem('trendly_token');
@@ -121,31 +94,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const parsedUser: User = JSON.parse(storedUser);
           setToken(storedToken);
           setUser(parsedUser);
-          // Set plan
           const plan = parsedUser[CURRENT_PLAN_COLUMN];
           setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
-          // Set Telegram status from parsedUser - Use import.meta.env
           const telegramVerified = parsedUser[import.meta.env.VITE_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified'] === true;
           const chatId = parsedUser[import.meta.env.VITE_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] || null;
           setIsTelegramVerified(telegramVerified);
-          setTelegramChatId(telegramVerified ? chatId : null); // Only store chatId if verified
-          
-          // --- UPDATED 2FA Check from localStorage ---
+          setTelegramChatId(telegramVerified ? chatId : null);
           const twoFactorValue = parsedUser[TWO_FACTOR_ENABLED_COLUMN];
           const twoFactorEnabled = twoFactorValue === true || twoFactorValue === 1 || twoFactorValue === '1';
           setIsTwoFactorEnabled(twoFactorEnabled);
-          // ------------------------------------------
-          
-          // --- Load Trial Status --- 
-          const trialUsedValue = parsedUser[IS_TRIAL_USED_COLUMN];
-          setIsTrialUsed(trialUsedValue === true || trialUsedValue === 1 || trialUsedValue === '1');
-
-          const expiresString = parsedUser[TRIAL_EXPIRES_AT_COLUMN];
-          setTrialExpiresAt(expiresString ? new Date(expiresString) : null); 
-          
-          const startedString = parsedUser[TRIAL_STARTED_AT_COLUMN];
-          setTrialStartedAt(startedString ? new Date(startedString) : null);
-          // -------------------------
           
         } catch (error) {
           console.error("Failed to parse stored user data:", error);
@@ -154,23 +111,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setCurrentPlan(null); 
           setIsTelegramVerified(false);
           setTelegramChatId(null);
-          setIsTwoFactorEnabled(false); // Reset on error
-          // --- Reset Trial State on Error --- 
-          setIsTrialUsed(false);
-          setTrialStartedAt(null);
-          setTrialExpiresAt(null);
-          // --------------------------------
+          setIsTwoFactorEnabled(false);
         }
       } else {
         setCurrentPlan(null);
         setIsTelegramVerified(false);
         setTelegramChatId(null);
-        setIsTwoFactorEnabled(false); // Reset if no stored data
-        // --- Reset Trial State if No Data --- 
-        setIsTrialUsed(false);
-        setTrialStartedAt(null);
-        setTrialExpiresAt(null);
-        // -----------------------------------
+        setIsTwoFactorEnabled(false);
       }
       setIsLoading(false);
     };
@@ -207,31 +154,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (userData && tokenData) {
           localStorage.setItem('trendly_token', tokenData);
           localStorage.setItem('trendly_user', JSON.stringify(userData));
-          // Set plan
           const plan = userData[CURRENT_PLAN_COLUMN];
           setCurrentPlan(plan && typeof plan === 'string' ? plan : null);
-           // Set Telegram status - Use import.meta.env
           const telegramVerified = userData[import.meta.env.VITE_TELEGRAM_VERIFIED_COLUMN || 'telegram_verified'] === true;
           const chatId = userData[import.meta.env.VITE_TELEGRAM_CHAT_ID_COLUMN || 'telegram_chat_id'] || null;
           setIsTelegramVerified(telegramVerified);
           setTelegramChatId(telegramVerified ? chatId : null);
-          
-          // --- UPDATED 2FA State Setting ---
           const twoFactorValue = userData[TWO_FACTOR_ENABLED_COLUMN];
           const twoFactorEnabled = twoFactorValue === true || twoFactorValue === 1 || twoFactorValue === '1';
           setIsTwoFactorEnabled(twoFactorEnabled);
-          // ---------------------------------
-          
-          // --- Set Trial Status --- 
-          const trialUsedValue = userData[IS_TRIAL_USED_COLUMN];
-          setIsTrialUsed(trialUsedValue === true || trialUsedValue === 1 || trialUsedValue === '1');
-
-          const expiresString = userData[TRIAL_EXPIRES_AT_COLUMN];
-          setTrialExpiresAt(expiresString ? new Date(expiresString) : null);
-
-          const startedString = userData[TRIAL_STARTED_AT_COLUMN];
-          setTrialStartedAt(startedString ? new Date(startedString) : null);
-          // ------------------------
           
       } else {
           localStorage.removeItem('trendly_user');
@@ -239,12 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setCurrentPlan(null);
           setIsTelegramVerified(false);
           setTelegramChatId(null);
-          setIsTwoFactorEnabled(false); // Reset on clear
-          // --- Reset Trial State on Clear --- 
-          setIsTrialUsed(false);
-          setTrialStartedAt(null);
-          setTrialExpiresAt(null);
-          // ----------------------------------
+          setIsTwoFactorEnabled(false);
       }
   }
 
@@ -288,17 +214,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Signup function - connects to backend
-  const signup = async (email: string, password: string, name: string) => {
+  const signup = async (email: string, password: string, name: string, accessCode: string) => {
     setIsLoading(true);
     try {
-       const response = await axios.post(`${AUTH_API_URL}/signup`, { name, email, password });
+       const response = await axios.post(`${AUTH_API_URL}/signup`, { name, email, password, accessCode });
        const { token: receivedToken, user: receivedUser } = response.data;
 
        if (receivedToken && receivedUser) {
          setUserAndPlan(receivedUser, receivedToken);
          toast({
            title: "Account created!",
-           description: "Welcome! Let's get you set up.", // Adjusted message
+           description: "Welcome! Your account is ready.", // Updated message
          });
          // Navigate based on onboarding status (should be false after signup)
          navigateAfterAuth(receivedUser); 
@@ -316,6 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "destructive"
       });
       console.error('Signup error:', error.response?.data || error);
+      throw error; // Re-throw the error so it can be caught in the Signup.tsx component
     } finally {
       setIsLoading(false);
     }
@@ -412,9 +339,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isTwoFactorEnabled, // Expose 2FA status
     is2FARequired, // <-- Expose
     isVerifying2FA, // <-- Expose
-    isTrialUsed,
-    trialStartedAt,
-    trialExpiresAt,
     login, // Assuming login/logout etc are stable due to useCallback or definition outside render
     signup,
     logout,
@@ -425,7 +349,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user, token, isLoading, currentPlan, 
     isTelegramVerified, telegramChatId, isTwoFactorEnabled, 
     is2FARequired, isVerifying2FA,
-    isTrialUsed, trialStartedAt, trialExpiresAt,
     // Include stable function references if they are defined with useCallback, otherwise they might cause updates
     // Assuming login, signup, logout, updateUserContext, submit2FACode, cancel2FA are stable
   ]);

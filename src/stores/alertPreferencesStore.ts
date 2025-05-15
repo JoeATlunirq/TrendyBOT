@@ -69,7 +69,7 @@ const defaultThresholds: ThresholdPreferences = {
 };
 
 const defaultFilters: FilterPreferences = {
-    filterChannels: '',
+    filterChannels: '{"groups":[], "selectedResearchGroupId": null}',
 };
 
 const defaultPreferences: AlertPreferencesData = { ...defaultThresholds, ...defaultFilters };
@@ -106,7 +106,7 @@ interface AlertPreferencesState {
 // Create the Zustand store
 export const useAlertPreferencesStore = create<AlertPreferencesState>((set, get) => ({
   thresholds: null,
-  filters: null,
+  filters: defaultFilters,
   isLoading: true,
   isSavingThresholds: false,
   isResettingThresholds: false,
@@ -115,17 +115,18 @@ export const useAlertPreferencesStore = create<AlertPreferencesState>((set, get)
     // --- Fetch Preferences ---
     fetchPreferences: async (token) => {
       if (!token) {
+        console.log("[AlertStore] fetchPreferences: No token, setting defaults.");
         set({ isLoading: false, thresholds: defaultThresholds, filters: defaultFilters });
         return;
       }
       set({ isLoading: true });
+      console.log("[AlertStore] fetchPreferences: Fetching with token...");
       try {
         const response = await axios.get<{ [key: string]: any }>(`${BACKEND_API_BASE_URL}/users/alert-preferences`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         
-        // --- DEBUG LOG 1: Log raw response data ---
-        console.log("[fetchPreferences] Raw API Response Data:", response.data);
+        console.log("[AlertStore] fetchPreferences: Raw API Response Data:", response.data);
         
         const data = response.data || {};
 
@@ -159,9 +160,16 @@ export const useAlertPreferencesStore = create<AlertPreferencesState>((set, get)
             thresholdLikesTimeWindowHours: getNumberOrNull('thresholdLikesTimeWindowHours', defaultThresholds.thresholdLikesTimeWindowHours),
             thresholdCommentsTimeWindowHours: getNumberOrNull('thresholdCommentsTimeWindowHours', defaultThresholds.thresholdCommentsTimeWindowHours),
         };
+        
+        const rawFilterChannels = data['filterChannels'];
+        console.log("[AlertStore] fetchPreferences: rawFilterChannels from API:", rawFilterChannels);
         const newFilters = {
-            filterChannels: data['filterChannels'] ?? defaultFilters.filterChannels,
+            // Ensure filterChannels is the default JSON structure if the fetched value is empty or invalid
+            filterChannels: (rawFilterChannels && typeof rawFilterChannels === 'string' && rawFilterChannels.trim() !== '' && rawFilterChannels.trim().startsWith('{')) 
+                            ? rawFilterChannels 
+                            : defaultFilters.filterChannels,
         };
+        console.log("[AlertStore] fetchPreferences: newFilters to be set:", newFilters);
 
         // --- DEBUG LOG 2: Log state object before setting ---
         console.log("[fetchPreferences] Parsed thresholds state:", newThresholds);
@@ -225,8 +233,13 @@ export const useAlertPreferencesStore = create<AlertPreferencesState>((set, get)
     // --- Save Actions ---
     saveThresholds: async (token) => {
       const { thresholds, filters } = get(); // Get both thresholds and filters
-      if (!token || !thresholds || !filters) return; // Ensure both exist
+      if (!token || !thresholds || !filters) { 
+        console.error("[AlertStore] saveThresholds: Aborted - Missing token, thresholds, or filters.");
+        return;
+      }
       set({ isSavingThresholds: true });
+
+      console.log("[AlertStore] saveThresholds: Current filters.filterChannels from store:", filters.filterChannels);
 
       // Prepare payload using camelCase keys (assuming backend prefers this)
       const payload = {

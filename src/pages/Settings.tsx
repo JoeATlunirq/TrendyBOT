@@ -7,14 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, Copy, CheckIcon } from 'lucide-react';
+import { Loader2, Copy, CheckIcon, Star, Check } from 'lucide-react';
 import { QRCodeCanvas } from "qrcode.react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from "@/components/ui/badge";
-import PayPalSubscriptionButton from '@/components/PayPalSubscriptionButton';
 import { cn } from '@/lib/utils';
-import { CreditCard, Star, Check } from 'lucide-react';
 import { format, isFuture } from 'date-fns';
 
 // Determine the base API URL based on the environment
@@ -40,28 +38,17 @@ const TELEGRAM_ID_COLUMN = 'telegram_chat_id';
 const DISCORD_URL_COLUMN = 'discord_webhook_url';
 const DELIVERY_PREF_COLUMN = 'delivery_preference';
 
-// Define Plan structure
-interface Plan {
-    name: string;
-    price: string;
-    period: string;
-    description: string;
-    features: string[];
-    isPopular?: boolean;
-    paypalPlanId: string; // Use LIVE PayPal Plan ID
-}
-
 // Helper function to get initial tab from hash
 const getInitialTab = (): string => {
     const hash = window.location.hash.replace('#', '');
-    return (hash === 'account' || hash === 'billing') ? hash : 'account';
+    return (hash === 'account') ? hash : 'account';
 };
 
 const API_BASE_URL = BACKEND_API_BASE_URL; // Added for consistency
 
 const Settings = () => {
     // Pass updateUserContext from useAuth
-    const { user, token, logout, updateUserContext, currentPlan, isTwoFactorEnabled, isTrialUsed, trialExpiresAt } = useAuth(); 
+    const { user, token, logout, updateUserContext, isTwoFactorEnabled, isLoading } = useAuth(); 
     const { toast } = useToast();
     const navigate = useNavigate();
     const [profileName, setProfileName] = useState('');
@@ -87,6 +74,7 @@ const Settings = () => {
     const [secretCopied, setSecretCopied] = useState(false);
     const [avatarSignedUrl, setAvatarSignedUrl] = useState<string | null>(null); // State for signed URL
     const [isFetchingAvatarUrl, setIsFetchingAvatarUrl] = useState(false); // Loading state
+    const [avatarCacheBuster, setAvatarCacheBuster] = useState<string>(""); // NEW: Cache buster state
 
     // Ref for hidden file input
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,6 +99,9 @@ const Settings = () => {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             setAvatarSignedUrl(response.data?.signedUrl || null); // Use null if no URL
+            if (response.data?.signedUrl) {
+                setAvatarCacheBuster(`?t=${new Date().getTime()}`); // Set cache buster on successful fetch
+            }
         } catch (error) {
             console.error("Error fetching avatar signed URL:", error);
             setAvatarSignedUrl(null); 
@@ -173,57 +164,6 @@ const Settings = () => {
         }
     };
 
-    // Define plans WITH CORRECT PayPal Plan IDs and Features
-    const plans: Plan[] = [
-        {
-            name: "Spark",
-            price: "7",
-            period: "/PM",
-            description: "For creators just getting started with trend tracking.",
-            features: [
-                "5 Alerts/Month",
-                "1 Niche Monitor",
-                "Email Alerts Only",
-                "Standard Detection Speed",
-                "Weekly Digest"
-            ],
-            paypalPlanId: 'P-4Y4434518B3747137NACRKNY' // LIVE Spark Plan ID
-        },
-        {
-            name: "Surge",
-            price: "10",
-            period: "/PM",
-            description: "For creators and marketers growing fast and reacting faster.",
-            features: [
-                "25 Alerts/Month",
-                "Up to 3 Niche/Channel Trackers",
-                "Telegram + Discord Alerts",
-                "Engagement Scoring",
-                "Faster Detection Window"
-            ],
-            isPopular: true,
-            paypalPlanId: 'P-6NC15818DS298615RNACRLEY' // LIVE Surge Plan ID
-        },
-        {
-            name: "Viral",
-            price: "12",
-            period: "/PM",
-            description: "For trend-obsessed power users, agencies, and ops teams.",
-            features: [
-                "Unlimited Alerts",
-                "Unlimited Niche + Channel Tracking",
-                "Priority Alert Speed",
-                "Custom Thresholds",
-                "AI-Powered Recommendations",
-                "Export",
-                "VIP Support",
-                "Current Short niches ranking"
-            ],
-            paypalPlanId: 'P-4XX40417EU7326443NACRM4Q' // LIVE Viral Plan ID
-        }
-    ];
-    // --------------------------
-
     // --- Placeholder Handlers ---
     const handleChangePhotoClick = () => {
         // Trigger the hidden file input
@@ -259,13 +199,22 @@ const Settings = () => {
             // --- MODIFIED SUCCESS HANDLING ---
             if (response.data?.photoPath) { // Check for photoPath from backend
                 toast({ title: "Photo Uploaded", description: response.data.message || "Processing complete." });
-                // Instead of updating context directly, trigger a refetch of the signed URL
-                await fetchAvatarUrl(); // Ensure this completes before updating context
-                updateUserContext({}); // Force context update to trigger DashboardLayout refresh
-                // Note: We don't update the user context here with the path,
-                // as the display components rely solely on the fetched signed URL.
-                // The underlying user object in AuthContext still holds the old path until next login/refresh.
-                // This is a trade-off for simplicity with signed URLs.
+                
+                setAvatarSignedUrl(null); // Clear old one immediately
+                setAvatarCacheBuster("");   // Clear old buster immediately
+
+                if (response.data.signedUrl) { // Prefer direct signed URL from upload response
+                    setAvatarSignedUrl(response.data.signedUrl);
+                    setAvatarCacheBuster(`?t=${new Date().getTime()}`);
+                    updateUserContext({ profilePictureUpdated: new Date().getTime() }); // More specific context update
+                } else {
+                    // Fallback if backend doesn't yet return signedUrl directly from upload
+                    console.warn("[Settings] Photo upload response did not include a direct signedUrl. Falling back to fetchAvatarUrl() after a short delay. Consider updating backend to return signedUrl from photo upload.");
+                    setTimeout(async () => {
+                        await fetchAvatarUrl(); // This will set signedUrl and cacheBuster via its own logic
+                        updateUserContext({ profilePictureUpdated: new Date().getTime() }); // More specific context update
+                    }, 1500); // Delay of 1.5 seconds
+                }
             } else {
                 throw new Error("Invalid response from server during photo upload (missing photoPath).");
             }
@@ -505,7 +454,7 @@ const Settings = () => {
     return (
         <div className="container mx-auto py-8 px-4 md:px-6 max-w-5xl">
             <h1 className="text-3xl font-bold mb-2 text-white font-orbitron">Settings</h1>
-            <p className="text-neutral-400 mb-6">Manage your account settings, billing, and notification preferences.</p>
+            <p className="text-neutral-400 mb-6">Manage your account settings and account settings.</p>
 
             {/* Update Tabs: Control value and handle change */}
             <Tabs 
@@ -516,15 +465,14 @@ const Settings = () => {
                 }}
                 className="w-full"
             >
-                <TabsList className="grid w-full grid-cols-2 mb-6 bg-neutral-800/50 border border-neutral-700/50 p-1 h-auto">
+                <TabsList className="grid w-full grid-cols-1 mb-6 bg-neutral-800/50 border border-neutral-700/50 p-1 h-auto">
                     <TabsTrigger value="account" className="data-[state=active]:bg-neutral-700 data-[state=active]:text-white text-neutral-400">Account</TabsTrigger>
-                    <TabsTrigger value="billing" className="data-[state=active]:bg-neutral-700 data-[state=active]:text-white text-neutral-400">Billing</TabsTrigger>
                 </TabsList>
 
                 {/* --- Account Tab Content --- */}
-                <TabsContent value="account">
-                    {/* Profile Section */}
-                    <Card className="mb-6 bg-neutral-800/50 border-neutral-700/50">
+                <TabsContent value="account" className="space-y-8 mt-0">
+                    {/* Profile Information Section */}
+                    <Card className="bg-neutral-800/50 border-neutral-700/50">
                         <CardHeader>
                             <CardTitle className="text-white font-orbitron">Profile</CardTitle>
                             <CardDescription className="text-neutral-400">Update your personal information</CardDescription>
@@ -545,8 +493,8 @@ const Settings = () => {
                                         />
                                         {/* Display Image - Use state variable */}
                                         <img 
-                                            key={avatarSignedUrl || 'fallback'} // Use signed URL for key
-                                            src={isFetchingAvatarUrl ? generateFallbackAvatar(undefined, undefined) : (avatarSignedUrl || generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]))} 
+                                            key={avatarSignedUrl + avatarCacheBuster} // MODIFIED: Use signed URL + cache buster for key
+                                            src={isFetchingAvatarUrl ? generateFallbackAvatar(undefined, undefined) : (avatarSignedUrl ? `${avatarSignedUrl}${avatarCacheBuster}` : generateFallbackAvatar(profileName, user?.[EMAIL_COLUMN]))} // MODIFIED: Append cache buster
                                             alt="Profile Avatar" 
                                             className="w-16 h-16 rounded-full bg-neutral-600 object-cover border-2 border-neutral-600"
                                             onError={(e) => { 
@@ -580,16 +528,6 @@ const Settings = () => {
                                         value={profileName} 
                                         onChange={(e) => setProfileName(e.target.value)}
                                         className="bg-neutral-700/60 border-neutral-600 text-white placeholder:text-neutral-500 focus-visible:ring-trendy-yellow"
-                                    />
-                                </div>
-                                 {/* Email (Display Only) */}
-                                <div className="space-y-2">
-                                    <Label htmlFor="profileEmail" className="text-neutral-300">Email Address</Label>
-                                    <Input 
-                                        id="profileEmail" 
-                                        value={user?.[EMAIL_COLUMN] ?? 'Loading...'} 
-                                        disabled 
-                                        className="bg-neutral-900 border-neutral-700 text-neutral-400" 
                                     />
                                 </div>
                                  {/* Company Name (Optional) */}
@@ -843,130 +781,6 @@ const Settings = () => {
                             </Button>
                         </CardFooter>
                     </Card>
-                </TabsContent>
-
-                {/* --- Billing Tab Content --- */} 
-                <TabsContent value="billing" className="mt-6">
-                     {/* Current Plan Summary - Use context value */}
-                     <Card className="mb-8 bg-neutral-800/50 border-neutral-700/50">
-                         <CardHeader>
-                             <CardTitle className="text-white font-orbitron">Current Subscription</CardTitle>
-                         </CardHeader>
-                         <CardContent className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                             <div>
-                                 <p className="text-lg font-semibold text-neutral-100">
-                                    {(() => {
-                                        if (currentPlan === 'Free Trial' && isTrialUsed) {
-                                            if (trialExpiresAt && isFuture(trialExpiresAt)) {
-                                                return (
-                                                    <>You are currently on the <span className="text-trendy-yellow">Free Trial</span> plan. Expires on <span className="text-neutral-300 font-medium">{format(trialExpiresAt, 'PPP')}</span>.</>
-                                                );
-                                            } else {
-                                                return (
-                                                    <>Your <span className="text-neutral-400">Free Trial</span> has expired.</>
-                                                );
-                                            }
-                                        } else if (currentPlan) {
-                                             return (
-                                                <>You are currently on the <span className="text-trendy-yellow">{currentPlan}</span> plan.</>
-                                             );
-                                        } else {
-                                             return (
-                                                <>You are on the <span className="text-neutral-400">Free</span> plan.</>
-                                             );
-                                        }
-                                    })()}
-                                 </p>
-                                 {/* Show manage/cancel only for paid, active plans */}
-                                 {currentPlan && currentPlan !== 'Free Trial' && (
-                                     <p className="text-sm text-neutral-400 mt-1">
-                                        Manage or cancel your subscription via PayPal.
-                                     </p>
-                                 )}
-                             </div>
-                             {/* Show manage/cancel buttons only for paid, active plans */} 
-                             {currentPlan && currentPlan !== 'Free Trial' && (
-                                 <div className="flex gap-3">
-                                     <Button 
-                                         variant="outline" 
-                                         onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
-                                         className="border-neutral-600 bg-neutral-700/60 hover:bg-neutral-600/80 text-neutral-300 hover:text-white"
-                                     >
-                                         <CreditCard className="mr-2 h-4 w-4" /> Manage Subscription
-                                     </Button>
-                                     <Button 
-                                         variant="destructive" 
-                                         onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
-                                         className="bg-red-700/80 hover:bg-red-600/90"
-                                     >
-                                         Cancel Subscription
-                                     </Button>
-                                 </div>
-                             )}
-                         </CardContent>
-                     </Card>
-
-                     {/* Pricing Tiers - Show upgrade/downgrade/cancel options based on current plan */}
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                         {plans.map((plan) => {
-                             const isCurrentPlan = currentPlan === plan.name;
-                             return (
-                                 <Card 
-                                     key={plan.name}
-                                     className={cn(
-                                         "flex flex-col bg-neutral-800/50 border-neutral-700/50 backdrop-blur-sm shadow-lg text-neutral-200",
-                                         plan.isPopular ? "border-trendy-yellow ring-2 ring-trendy-yellow/50" : "border-neutral-700/50",
-                                         isCurrentPlan ? "ring-2 ring-green-500/50" : ""
-                                     )}
-                                 >
-                                     <CardHeader className="pb-4">
-                                          {plan.isPopular && !isCurrentPlan && (
-                                              <div className="flex justify-end mb-2">
-                                                  <Badge variant="default" className="bg-trendy-yellow text-trendy-brown border-none">Most Popular</Badge>
-                                              </div>
-                                          )}
-                                          {isCurrentPlan && (
-                                              <div className="flex justify-end mb-2">
-                                                  <Badge variant="default" className="bg-green-600 text-white border-none">Current Plan</Badge>
-                                              </div>
-                                          )}
-                                         <CardTitle className="font-orbitron text-white text-xl tracking-wider">{plan.name.toUpperCase()}</CardTitle>
-                                         <div className="flex items-baseline gap-1">
-                                             <span className="text-4xl font-bold text-white">${plan.price}</span>
-                                             <span className="text-sm text-neutral-400 font-medium">{plan.period}</span>
-                                         </div>
-                                         <CardDescription className="text-neutral-400 pt-1 !mt-1 text-sm">{plan.description}</CardDescription>
-                                     </CardHeader>
-                                     <CardContent className="flex-1 space-y-3 pt-0 pb-6">
-                                          <ul className="space-y-2 text-sm">
-                                             {plan.features.map((feature, index) => (
-                                                 <li key={index} className="flex items-start gap-2">
-                                                     <Check className="h-4 w-4 mt-0.5 text-green-400 flex-shrink-0" />
-                                                     <span className="text-neutral-300">{feature}</span>
-                                                 </li>
-                                             ))}
-                                         </ul>
-                                     </CardContent>
-                                     <CardFooter className="flex-col items-stretch">
-                                         {isCurrentPlan ? (
-                                            <Button 
-                                                variant="destructive"
-                                                className="w-full font-semibold bg-red-700/80 hover:bg-red-600/90 text-white" 
-                                                onClick={() => window.open('https://www.paypal.com/myaccount/autopay/', '_blank')}
-                                            >
-                                                 Cancel Subscription
-                                            </Button>
-                                         ) : (
-                                             <PayPalSubscriptionButton 
-                                                 planId={plan.paypalPlanId} 
-                                                 planName={plan.name} 
-                                             />
-                                         )}
-                                     </CardFooter>
-                                 </Card>
-                             );
-                         })}
-                     </div>
                  </TabsContent>
             </Tabs>
         </div>

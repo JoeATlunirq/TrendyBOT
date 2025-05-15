@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Logo } from "@/components/Logo";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2 } from "lucide-react";
 import { MailCheck } from 'lucide-react'; // Icon for success state
@@ -54,7 +53,6 @@ const ForgotPassword = () => {
     <div className="min-h-screen flex flex-col items-center justify-center bg-trendy-brown text-neutral-200 p-4 md:p-8">
       <div className="w-full max-w-md space-y-8">
         <div className="flex flex-col items-center text-center">
-          <Logo className="w-16 h-16 mb-4 text-trendy-yellow" />
           <h1 className="text-3xl font-orbitron font-bold text-white">
             {messageSent ? "Check Your Email" : "Forgot Password?"}
           </h1>

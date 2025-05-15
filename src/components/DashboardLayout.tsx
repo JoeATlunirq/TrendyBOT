@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bell, BellRing, History, LogOut, Menu, Settings, SlidersHorizontal, MessageSquareText, Youtube } from "lucide-react";
+import { Bell, BellRing, History, LogOut, Menu, Settings, SlidersHorizontal, MessageSquareText, Youtube, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
@@ -142,7 +142,7 @@ export const DashboardLayout: React.FC = () => {
 
   const mainNavItems = [
     { icon: <Youtube className="h-5 w-5" />, label: "Trending", to: "/trending" },
-    { icon: <History className="h-5 w-5" />, label: "History", to: "/history" },
+    { icon: <Search className="h-5 w-5" />, label: "Research", to: "/research" },
     { icon: <SlidersHorizontal className="h-5 w-5" />, label: "Alert Preferences", to: "/alert-preferences" },
     { icon: <MessageSquareText className="h-5 w-5" />, label: "Alert Templates", to: "/alert-templates" },
     { icon: <Bell className="h-5 w-5" />, label: "Notification Settings", to: "/notification-settings" },
@@ -177,22 +177,19 @@ export const DashboardLayout: React.FC = () => {
           </SidebarContent>
           <SidebarFooter className="p-4 border-t border-neutral-700/50">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <Link to="/settings" className="flex items-center gap-2 group">
                 <Avatar>
                   <AvatarImage src={avatarSrc} alt={user?.[NAME_COLUMN] || 'User Avatar'} />
-                  <AvatarFallback className="bg-trendy-yellow text-trendy-brown">
+                  <AvatarFallback className="bg-trendy-yellow text-trendy-brown group-hover:bg-trendy-yellow/80">
                     {getUserInitials()}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col">
-                  <span className="text-sm font-medium text-neutral-100">
+                  <span className="text-sm font-medium text-neutral-100 group-hover:text-trendy-yellow">
                     {user?.[NAME_COLUMN] || user?.[EMAIL_COLUMN]}
                   </span>
-                  <span className="text-xs text-neutral-500">
-                    Free Account
-                  </span>
                 </div>
-              </div>
+              </Link>
               <Button
                 variant="ghost"
                 size="icon"
@@ -212,20 +209,20 @@ export const DashboardLayout: React.FC = () => {
                 variant="ghost" 
                 size="icon"
                 className="text-muted-foreground hover:text-trendy-yellow"
-                onClick={() => navigate('/settings')}
+                onClick={() => navigate('/trending')}
               >
                 <BellRing className="h-5 w-5" />
               </Button>
               <Separator orientation="vertical" className="h-8" />
-              <div className="flex items-center gap-2">
+              <Link to="/settings" className="flex items-center gap-2 group">
                 <Avatar className="h-8 w-8">
                   <AvatarImage src={avatarSrc} alt={user?.[NAME_COLUMN] || 'User Avatar'} />
-                  <AvatarFallback className="bg-trendy-yellow text-trendy-brown text-sm">
+                  <AvatarFallback className="bg-trendy-yellow text-trendy-brown text-sm group-hover:bg-trendy-yellow/80">
                     {getUserInitials()}
                   </AvatarFallback>
                 </Avatar>
-                <div className="text-sm font-medium">{user?.[NAME_COLUMN] || user?.[EMAIL_COLUMN]}</div>
-              </div>
+                <div className="text-sm font-medium text-neutral-100 group-hover:text-trendy-yellow">{user?.[NAME_COLUMN] || user?.[EMAIL_COLUMN]}</div>
+              </Link>
             </div>
           </header>
           <main className="flex-1 overflow-auto p-6">
@@ -260,22 +257,19 @@ export const DashboardLayout: React.FC = () => {
                 </div>
                 <div className="p-4 border-t border-neutral-700/50">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <Link to="/settings" className="flex items-center gap-2 group" onClick={closeMobileMenu}>
                       <Avatar>
                         <AvatarImage src={avatarSrc} alt={user?.[NAME_COLUMN] || 'User Avatar'} />
-                        <AvatarFallback className="bg-trendy-yellow text-trendy-brown">
+                        <AvatarFallback className="bg-trendy-yellow text-trendy-brown group-hover:bg-trendy-yellow/80">
                           {getUserInitials()}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-neutral-100">
+                        <span className="text-sm font-medium text-neutral-100 group-hover:text-trendy-yellow">
                           {user?.[NAME_COLUMN] || user?.[EMAIL_COLUMN]}
                         </span>
-                        <span className="text-xs text-neutral-500">
-                          Free Account
-                        </span>
                       </div>
-                    </div>
+                    </Link>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -299,16 +293,18 @@ export const DashboardLayout: React.FC = () => {
             variant="ghost" 
             size="icon"
             className="text-muted-foreground hover:text-trendy-yellow"
-            onClick={() => navigate('/settings')}
+            onClick={() => navigate('/trending')}
           >
             <BellRing className="h-5 w-5" />
           </Button>
+          <Link to="/settings" className="group">
           <Avatar className="h-8 w-8">
             <AvatarImage src={avatarSrc} alt={user?.[NAME_COLUMN] || 'User Avatar'} />
-            <AvatarFallback className="bg-trendy-yellow text-trendy-brown text-sm">
+              <AvatarFallback className="bg-trendy-yellow text-trendy-brown text-sm group-hover:bg-trendy-yellow/80">
               {getUserInitials()}
             </AvatarFallback>
           </Avatar>
+          </Link>
         </div>
       </header>
       <main className="flex-1 overflow-auto p-4 md:p-6">

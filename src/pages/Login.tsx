@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Logo } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
 
 const Login = () => {
@@ -28,15 +27,14 @@ const Login = () => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-trendy-brown text-neutral-200 p-4 md:p-8">
       <div className="w-full max-w-md space-y-8">
-        <div className="flex flex-col items-center text-center">
-          <Logo className="w-16 h-16 mb-4 text-trendy-yellow" />
+        <div className="flex flex-col items-center text-center mb-8">
           <h1 className="text-3xl font-orbitron font-bold text-white">
             {is2FARequired ? 'Enter Verification Code' : 'Welcome back'}
           </h1>
           <p className="text-neutral-400 mt-2">
             {is2FARequired 
               ? 'Enter the 6-digit code from your authenticator app.'
-              : 'Log in to your Trendy.bot account to continue monitoring YouTube Shorts trends'
+              : 'Log in to your account to continue monitoring YouTube Shorts trends'
             }
           </p>
         </div>

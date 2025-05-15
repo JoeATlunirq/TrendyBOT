@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const NocoDBService = require('../services/nocodb.service');
 
 /**
  * Middleware to verify JWT and attach user to request object.

@@ -1,11 +1,40 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const NocoDBService = require('../services/nocodb.service');
-const SubscriptionLogicService = require('../services/subscriptionLogic.service');
-const COLS = require('../config/nocodb_columns');
+const { supabase, isSupabaseReady } = require('../services/supabase.service'); // Corrected typo
 const { authenticator } = require('otplib');
 const { sendEmail } = require('../services/email.service');
+// const SubscriptionLogicService = require('../services/subscriptionLogic.service'); // Keep if still used, assess later
+
+// Remove NocoDB specific imports
+// const NocoDBService = require('../services/nocodb.service.js');
+// const COLS = require('../config/nocodb_columns');
+
+// --- Supabase Table and Column Constants ---
+// Users Table
+const USERS_TABLE = 'Users';
+const USER_COL_ID = 'id'; // Assuming 'id' is the primary key in Supabase
+const USER_COL_NAMES = 'Names'; // Or 'name' - verify actual column name
+const USER_COL_EMAIL = 'Emails'; // Changed from 'email' to 'Emails'
+const USER_COL_PASSWORD = 'Passwords'; // Changed from 'password' to 'Passwords'
+const USER_COL_CURRENT_PLAN = 'current_plan'; // Assuming 'current_plan' not 'current_plan_id'
+const USER_COL_SUBSCRIPTION_STATUS = 'subscription_status'; // Example, verify actual
+const USER_COL_IS_TRIAL_USED = 'is_trial_used'; // Example, verify actual
+const USER_COL_TELEGRAM_ACCESS_CODE = 'telegram_access_code'; // Verify actual
+const USER_COL_IS_2FA_ENABLED = 'is_2fa_enabled'; // Verify actual
+const USER_COL_TWO_FACTOR_SECRET = 'two_factor_secret'; // Verify actual
+const USER_COL_PASSWORD_RESET_TOKEN = 'password_reset_token'; // Verify actual
+const USER_COL_PASSWORD_RESET_EXPIRES = 'password_reset_expires'; // Verify actual
+// Add other USER_COL_... as needed from the old COLS object and your Supabase schema
+
+// AccessCodes Table
+const ACCESS_CODES_TABLE = 'AccessCodes'; // Verify actual table name
+const AC_COL_ID = 'id'; // Assuming 'id' is PK
+const AC_COL_CODE = 'code'; // Verify actual column name for the access code string
+const AC_COL_IS_USED = 'is_used'; // Verify actual
+const AC_COL_USED_BY_USER_ID = 'used_by_user_id'; // Verify actual
+const AC_COL_USED_AT = 'date_used'; // UPDATED from 'used_at'
+// Add other AC_COL_... if needed
 
 // --- Helper Functions ---
 const generateToken = (userId) => {
@@ -22,19 +51,43 @@ const generateToken = (userId) => {
  * @access  Public
  */
 const signup = async (req, res, next) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, accessCode } = req.body;
 
   try {
-    // Basic Validation
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Please provide name, email, and password' });
+    if (!name || !email || !password || !accessCode) {
+      return res.status(400).json({ message: 'Please provide name, email, password, and access code' });
     }
     if (password.length < 8) {
         return res.status(400).json({ message: 'Password must be at least 8 characters' });
     }
 
-    // Check if user already exists
-    const existingUser = await NocoDBService.findUserByEmail(email);
+    // Validate Access Code with Supabase
+    const { data: accessCodeRecord, error: accessCodeError } = await supabase
+      .from(ACCESS_CODES_TABLE)
+      .select('*')
+      .eq(AC_COL_CODE, accessCode)
+      .single();
+
+    if (accessCodeError || !accessCodeRecord) {
+      console.error('[Auth Signup] Error validating access code:', accessCodeError?.message || 'Access code not found');
+      return res.status(400).json({ message: 'Invalid or expired access code.' });
+    }
+    if (accessCodeRecord[AC_COL_IS_USED]) {
+      return res.status(400).json({ message: 'Access code has already been used.' });
+    }
+    // TODO: Add check for access code expiry if you have an expiry column
+
+    // Check if user already exists with Supabase
+    const { data: existingUser, error: existingUserError } = await supabase
+      .from(USERS_TABLE)
+      .select(USER_COL_ID)
+      .eq(USER_COL_EMAIL, email)
+      .maybeSingle(); // Use maybeSingle as user might not exist
+
+    if (existingUserError && existingUserError.code !== 'PGRST116') { // PGRST116: 0 rows
+        console.error('[Auth Signup] Error checking existing user:', existingUserError.message);
+        throw existingUserError; 
+    }
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
@@ -43,67 +96,63 @@ const signup = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user in NocoDB
-    // Assume createUser only takes essential fields, others are set later
-    const newUserBase = await NocoDBService.createUser(name, email, hashedPassword);
-    if (!newUserBase || !newUserBase[COLS.USER_ID]) { // Check if ID exists
-        throw new Error('Failed to create user record in NocoDB or missing ID.');
-    }
-    const userId = newUserBase[COLS.USER_ID];
+    // Create user in Supabase
+    const newUserPayload = {
+      [USER_COL_NAMES]: name,
+      [USER_COL_EMAIL]: email,
+      [USER_COL_PASSWORD]: hashedPassword,
+      // Add any other default fields required by your Users table schema for new users
+      // e.g., email_verified: false, if you have such a column
+    };
+    const { data: newUserBase, error: createUserError } = await supabase
+      .from(USERS_TABLE)
+      .insert(newUserPayload)
+      .select()
+      .single();
 
-    // Initialize Free Trial
-    let trialResult = { success: false, message: 'Trial check skipped.' };
-    try {
-        trialResult = await SubscriptionLogicService.startFreeTrial(userId);
-        if (trialResult.success) {
-            console.log(`Trial initialized for new user ${userId}`);
-            // Add trial info to user object if needed for response
-            newUserBase[COLS.CURRENT_PLAN] = "Free Trial"; 
-            newUserBase[COLS.SUBSCRIPTION_STATUS] = "Active";
-            newUserBase[COLS.TELEGRAM_ACCESS_CODE] = trialResult.accessCode; // Include generated code
-        } else {
-            console.warn(`Trial not started for user ${userId}: ${trialResult.message}`);
-             // Ensure user is marked appropriately if trial fails
-             await NocoDBService.updateUser(userId, {
-                 [COLS.CURRENT_PLAN]: "Inactive",
-                 [COLS.SUBSCRIPTION_STATUS]: "Requires Subscription",
-                 [COLS.IS_TRIAL_USED]: true // Mark as used even if failed
-            });
-             newUserBase[COLS.CURRENT_PLAN] = "Inactive";
-             newUserBase[COLS.SUBSCRIPTION_STATUS] = "Requires Subscription";
-        }
-    } catch (trialError) {
-        console.error(`Critical error during trial initialization for user ${userId}:`, trialError);
-        // If trial fails catastrophically, should we delete the user? Or leave inactive?
-        // For now, leave inactive
-         try {
-            await NocoDBService.updateUser(userId, {
-                [COLS.CURRENT_PLAN]: "Inactive",
-                [COLS.SUBSCRIPTION_STATUS]: "Requires Subscription",
-                [COLS.IS_TRIAL_USED]: true
-            });
-            newUserBase[COLS.CURRENT_PLAN] = "Inactive";
-            newUserBase[COLS.SUBSCRIPTION_STATUS] = "Requires Subscription";
-        } catch (updateError) {
-             console.error(`Failed to update user ${userId} status after trial init error:`, updateError);
-        }
+    if (createUserError || !newUserBase) {
+        console.error('[Auth Signup] Failed to create user record in Supabase:', createUserError?.message || 'No user data returned');
+        throw new Error('Failed to create user record or missing ID.');
+    }
+    const userId = newUserBase.id; // Supabase typically returns 'id' as primary key
+
+    // Mark the access code as used
+    const { error: markUsedError } = await supabase
+      .from(ACCESS_CODES_TABLE)
+      .update({ 
+          [AC_COL_IS_USED]: true,
+          [AC_COL_USED_BY_USER_ID]: userId,
+          [AC_COL_USED_AT]: new Date().toISOString()
+      })
+      .eq(AC_COL_ID, accessCodeRecord.id); // Use the ID of the fetched access code record
+
+    if (markUsedError) {
+        console.error(`CRITICAL: Failed to mark access code ${accessCode} (ID: ${accessCodeRecord.id}) as used for user ${userId} AFTER user creation:`, markUsedError.message);
+        // Consider rollback or cleanup strategy if this fails
     }
 
-    // Generate JWT
-    const token = generateToken(userId); 
+    const userForResponse = newUserBase; // Assign newUserBase directly
 
-    // Exclude password from the response user object
-    const { [COLS.PASSWORD]: _, ...userResponse } = newUserBase; // Use potentially updated newUserBase
+    // Generate JWT (remains the same)
+    const token = generateToken(userId);
+
+    // Exclude password and other sensitive fields from the response user object
+    const { [USER_COL_PASSWORD]: _, [USER_COL_TELEGRAM_ACCESS_CODE]: __, ...userResponse } = userForResponse;
+    // Add any other fields to exclude from the response, like 2FA secrets, reset tokens etc.
 
     res.status(201).json({
       token,
-      user: userResponse, // Send back user info (without password, with plan status)
+      user: userResponse,
     });
 
   } catch (error) {
-    console.error('Signup Error:', error);
-    // Handle specific errors (like duplicate email already handled)
-    next(error); // Pass to generic error handler
+    console.error('Signup Error:', error.message);
+    // Ensure the error passed to next() is an actual Error object
+    if (error instanceof Error) {
+        next(error);
+    } else {
+        next(new Error(error.message || 'An unexpected error occurred during signup.'));
+    }
   }
 };
 
@@ -116,64 +165,81 @@ const login = async (req, res, next) => {
   const { email, password } = req.body;
 
   try {
-    // Basic Validation
+    if (!isSupabaseReady()) {
+        console.error('[Auth Login] Supabase client not ready.');
+        return res.status(503).json({ message: 'Server is temporarily unavailable. Please try again later.' });
+    }
+
     if (!email || !password) {
       return res.status(400).json({ message: 'Please provide email and password' });
     }
 
-    // Find user by email
-    const user = await NocoDBService.findUserByEmail(email);
-    
-    // --- ADD LOGGING HERE ---
-    console.log('[Login Controller] User object received from NocoDBService:', JSON.stringify(user, null, 2));
-    // ------------------------
+    // Find user by email in Supabase
+    // Select all columns needed for login logic and for the user object in response
+    const { data: user, error: findUserError } = await supabase
+      .from(USERS_TABLE)
+      .select('*') // Or specify columns: `${USER_COL_ID}, ${USER_COL_EMAIL}, ${USER_COL_PASSWORD}, ${USER_COL_IS_2FA_ENABLED}, ...other_needed_columns`
+      .eq(USER_COL_EMAIL, email)
+      .maybeSingle(); // User might not exist
+
+    if (findUserError && findUserError.code !== 'PGRST116') { // PGRST116: 0 rows, handled by !user check
+        console.error('[Auth Login] Error finding user:', findUserError.message);
+        throw findUserError;
+    }
 
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' }); // User not found
+      console.log(`[Auth Login] User not found with email: ${email}`);
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
+    
+    // console.log('[Auth Login] User object received from Supabase:', JSON.stringify(user, null, 2));
 
     // Compare password
-    const passwordColumn = COLS.PASSWORD; // Use COLS constant
-    const isMatch = await bcrypt.compare(password, user[passwordColumn]);
+    const isMatch = await bcrypt.compare(password, user[USER_COL_PASSWORD]);
 
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' }); // Wrong password
+      console.log(`[Auth Login] Password mismatch for user: ${email}`);
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // ---> Check if 2FA is enabled <----
-    const is2FAEnabledColumn = COLS.IS_2FA_ENABLED; // Use COLS from config
-    // --- ADD LOGGING HERE TOO ---
-    console.log(`[Login Controller] Checking 2FA status. Column name: '${is2FAEnabledColumn}', Value in user object:`, user[is2FAEnabledColumn]);
-    // --------------------------
-    // --- UPDATED CHECK: Handle 1/0 or true/false from NocoDB ---
-    const is2FAEnabled = user[is2FAEnabledColumn] === true || user[is2FAEnabledColumn] === 1 || user[is2FAEnabledColumn] === '1';
-    // ----------------------------------------------------------
-    if (is2FAEnabled) { // <-- Use the evaluated boolean
-        // 2FA is required, send back a flag and userId
-        console.log(`2FA required for user: ${user[COLS.USER_ID]}`);
+    // Check if 2FA is enabled
+    // Supabase boolean columns are true/false
+    const is2FAEnabled = user[USER_COL_IS_2FA_ENABLED] === true;
+    // console.log(`[Auth Login] Checking 2FA status. Column: '${USER_COL_IS_2FA_ENABLED}', Value:`, user[USER_COL_IS_2FA_ENABLED], 'Parsed as:', is2FAEnabled);
+    
+    if (is2FAEnabled) {
+        console.log(`[Auth Login] 2FA required for user: ${user[USER_COL_ID]}`);
         return res.status(200).json({
             twoFactorRequired: true,
-            userId: user[COLS.USER_ID] // Send userId to use in the next step
+            userId: user[USER_COL_ID] // Or user.id directly if USER_COL_ID is 'id'
         });
     } 
-    // ---> End 2FA Check <----
     
     // If 2FA is not enabled, proceed with normal login
-    console.log(`Standard login successful for user: ${user[COLS.USER_ID]}`);
-    const token = generateToken(user[COLS.USER_ID]); // Use COLS constant for ID
+    console.log(`[Auth Login] Standard login successful for user: ${user[USER_COL_ID]}`);
+    const token = generateToken(user[USER_COL_ID]);
 
-    // Exclude password from the response user object
-    const { [passwordColumn]: _, ...userWithoutPassword } = user;
+    // Exclude password and other sensitive fields from the response user object
+    const { 
+        [USER_COL_PASSWORD]: _,
+        [USER_COL_TWO_FACTOR_SECRET]: __, // Also exclude 2FA secret if present
+        [USER_COL_PASSWORD_RESET_TOKEN]: ___,
+        [USER_COL_PASSWORD_RESET_EXPIRES]: ____,
+        ...userWithoutSensitiveData 
+    } = user;
 
     res.status(200).json({
       token,
-      user: userWithoutPassword, // Send back user info (without password)
+      user: userWithoutSensitiveData,
     });
 
   } catch (error) {
-    console.error('Login Error:', error);
-    // Pass error to the error handling middleware
-    next(error); 
+    console.error('Login Error:', error.message);
+    if (error instanceof Error) {
+        next(error);
+    } else {
+        next(new Error(error.message || 'An unexpected error occurred during login.'));
+    }
   }
 };
 
@@ -183,41 +249,60 @@ const login = async (req, res, next) => {
  * @access  Public
  */
 const verifyLogin2FA = async (req, res, next) => {
-    const { userId, token } = req.body; // Get userId (from previous step) and 2FA token
+    const { userId, token } = req.body;
 
-    if (!userId || !token || !/\d{6}/.test(token)) {
+    if (!userId || !token || !/^\d{6}$/.test(token)) { // Corrected regex test
         return res.status(400).json({ message: 'User ID and valid 6-digit token are required.' });
     }
 
     try {
-        // Fetch the user record to get the secret
-        const user = await NocoDBService.getUserRecordById(userId); // Use the service function
-        if (!user) {
-             return res.status(404).json({ message: 'User not found.' });
+        if (!isSupabaseReady()) {
+            console.error('[Auth Verify2FA] Supabase client not ready.');
+            return res.status(503).json({ message: 'Server is temporarily unavailable.' });
         }
 
-        const secretColumn = COLS.TWO_FACTOR_SECRET; // Use COLS constant
-        const secret = user[secretColumn];
+        // Fetch the user record to get the secret
+        // Construct select string carefully if USER_COL_... constants might have spaces or special chars (not typical)
+        const selectColumns = [
+            USER_COL_ID,
+            USER_COL_EMAIL,
+            USER_COL_PASSWORD, // Though not strictly needed for 2FA verify, often part of user object
+            USER_COL_TWO_FACTOR_SECRET,
+            USER_COL_NAMES
+            // Add any other columns needed for the response user object
+        ].join(',');
+
+        const { data: user, error: findUserError } = await supabase
+            .from(USERS_TABLE)
+            .select(selectColumns)
+            .eq(USER_COL_ID, userId)
+            .single(); // Expect a single user
+
+        if (findUserError || !user) {
+            console.error(`[Auth Verify2FA] User not found with ID: ${userId}`, findUserError?.message);
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const secret = user[USER_COL_TWO_FACTOR_SECRET];
 
         if (!secret) {
-            // This shouldn't happen if 2FA was required, but good practice
-            console.error(`Attempted 2FA login verification for user ${userId} but no secret found.`);
+            console.error(`[Auth Verify2FA] Attempted 2FA login verification for user ${userId} but no secret found.`);
             return res.status(400).json({ message: '2FA is not configured correctly for this user.' });
         }
 
-        // Verify the token
+        // Verify the token (otplib authenticator usage remains the same)
         const isValid = authenticator.verify({ token, secret });
 
         if (isValid) {
-            // Token is valid, generate the final JWT and return user data
-            console.log(`2FA verification successful for user: ${userId}`);
-            const finalToken = generateToken(userId);
+            console.log(`[Auth Verify2FA] 2FA verification successful for user: ${userId}`);
+            const finalToken = generateToken(userId); // JWT generation remains the same
 
-            // Exclude sensitive fields (password, 2FA secret)
-            const passwordColumn = COLS.PASSWORD;
+            // Exclude sensitive fields (password, 2FA secret) from the response user object
             const { 
-                [passwordColumn]: _, 
-                [secretColumn]: __, 
+                [USER_COL_PASSWORD]: _,
+                [USER_COL_TWO_FACTOR_SECRET]: __,
+                [USER_COL_PASSWORD_RESET_TOKEN]: ___,
+                [USER_COL_PASSWORD_RESET_EXPIRES]: ____,
                 ...userResponse 
             } = user;
 
@@ -226,14 +311,17 @@ const verifyLogin2FA = async (req, res, next) => {
                 user: userResponse
             });
         } else {
-            // Token is invalid
-            console.log(`Invalid 2FA token attempt during login for user: ${userId}`);
+            console.log(`[Auth Verify2FA] Invalid 2FA token attempt during login for user: ${userId}`);
             res.status(401).json({ message: 'Invalid 2FA code.' });
         }
 
     } catch (error) {
-        console.error(`Error verifying login 2FA for user ID: ${userId}:`, error);
-        next(error); // Pass to generic error handler
+        console.error(`[Auth Verify2FA] Error verifying login 2FA for user ID: ${userId}:`, error.message);
+        if (error instanceof Error) {
+            next(error);
+        } else {
+            next(new Error(error.message || 'An unexpected error occurred during 2FA verification.'));
+        }
     }
 };
 
@@ -249,65 +337,89 @@ const requestPasswordReset = async (req, res, next) => {
     }
 
     try {
-        // 1. Find user by email
-        const user = await NocoDBService.findUserByEmail(email);
+        if (!isSupabaseReady()) {
+            console.error('[Auth ReqPassReset] Supabase client not ready.');
+            return res.status(503).json({ message: 'Server is temporarily unavailable.' });
+        }
 
-        if (user) {
-            // 2. Generate a secure random token
+        // 1. Find user by email in Supabase
+        const { data: user, error: findUserError } = await supabase
+            .from(USERS_TABLE)
+            .select(`${USER_COL_ID}, ${USER_COL_EMAIL}`) // Only need ID and email for this step
+            .eq(USER_COL_EMAIL, email)
+            .maybeSingle();
+
+        if (findUserError && findUserError.code !== 'PGRST116') { // PGRST116 means 0 rows
+            console.error('[Auth ReqPassReset] Error finding user by email:', findUserError.message);
+            // Don't throw, proceed to generic success response to prevent email enumeration
+        } else if (user) {
+            // User found, proceed to generate and store token
+            console.log(`[Auth ReqPassReset] User found for password reset: ${email} (ID: ${user.id})`);
+            // 2. Generate a secure random token (remains the same)
             const resetToken = crypto.randomBytes(32).toString('hex');
 
-            // 3. Hash the token before saving to DB
+            // 3. Hash the token before saving to DB (remains the same)
             const hashedToken = crypto
                 .createHash('sha256')
                 .update(resetToken)
                 .digest('hex');
 
-            // 4. Set expiry (e.g., 1 hour from now)
+            // 4. Set expiry (e.g., 1 hour from now) (remains the same)
             const expires = new Date(Date.now() + 3600000); // 1 hour
 
-            // 5. Update user record in NocoDB with hashed token and expiry
-            await NocoDBService.updateUser(user[COLS.USER_ID], {
-                [COLS.PASSWORD_RESET_TOKEN]: hashedToken,
-                [COLS.PASSWORD_RESET_EXPIRES]: expires.toISOString(),
-            });
+            // 5. Update user record in Supabase with hashed token and expiry
+            const { error: updateError } = await supabase
+                .from(USERS_TABLE)
+                .update({
+                    [USER_COL_PASSWORD_RESET_TOKEN]: hashedToken,
+                    [USER_COL_PASSWORD_RESET_EXPIRES]: expires.toISOString(),
+                })
+                .eq(USER_COL_ID, user.id); // Use user.id from the fetched record
 
-            // 6. Construct reset URL (adjust base URL as needed)
-            // Ensure VITE_FRONTEND_URL is set in backend .env or hardcode for now
-            const frontendBaseUrl = process.env.VITE_FRONTEND_URL || 'http://localhost:5173'; 
-            const resetUrl = `${frontendBaseUrl}/reset-password?token=${resetToken}`;
+            if (updateError) {
+                console.error(`[Auth ReqPassReset] Failed to update user with reset token for ${email}:`, updateError.message);
+                // Don't throw, proceed to generic success to prevent detailed error leakage
+            } else {
+                // 6. Construct reset URL (remains the same)
+                const frontendBaseUrl = process.env.VITE_FRONTEND_URL || 'http://localhost:5173'; 
+                const resetUrl = `${frontendBaseUrl}/reset-password?token=${resetToken}`;
 
-            // 7. Send the email
-            const subject = 'Password Reset Request for Trendy Bot';
-            const textBody = `You requested a password reset. Click the link below to reset your password. This link is valid for 1 hour.\n\n${resetUrl}\n\nIf you did not request this, please ignore this email.`;
-            const htmlBody = `
-                <p>You requested a password reset for your Trendy Bot account.</p>
-                <p>Click the link below to reset your password. This link is valid for <strong>1 hour</strong>.</p>
-                <p><a href="${resetUrl}" target="_blank">Reset Your Password</a></p>
-                <p>If you cannot click the link, copy and paste this URL into your browser:</p>
-                <p>${resetUrl}</p>
-                <p>If you did not request this, please ignore this email.</p>
-            `;
-
-            await sendEmail({ 
-                to: email, 
-                subject: subject, 
-                text: textBody, 
-                html: htmlBody 
-            });
-
-            console.log(`Password reset email sent successfully to ${email}`);
+                // 7. Send the email (sendEmail service usage remains the same)
+                const subject = 'Password Reset Request for Trendy Bot';
+                const textBody = `You requested a password reset. Click the link below to reset your password. This link is valid for 1 hour.\n\n${resetUrl}\n\nIf you did not request this, please ignore this email.`;
+                const htmlBody = `
+                    <p>You requested a password reset for your Trendy Bot account.</p>
+                    <p>Click the link below to reset your password. This link is valid for <strong>1 hour</strong>.</p>
+                    <p><a href="${resetUrl}" target="_blank">Reset Your Password</a></p>
+                    <p>If you cannot click the link, copy and paste this URL into your browser:</p>
+                    <p>${resetUrl}</p>
+                    <p>If you did not request this, please ignore this email.</p>
+                `;
+                try {
+                    await sendEmail({ 
+                        to: email, 
+                        subject: subject, 
+                        text: textBody, 
+                        html: htmlBody 
+                    });
+                    console.log(`[Auth ReqPassReset] Password reset email sent successfully to ${email}`);
+                } catch (emailError) {
+                    console.error(`[Auth ReqPassReset] Failed to send password reset email to ${email}:`, emailError.message);
+                    // Log error but still send generic success to user
+                }
+            }
         } else {
             // User not found - DO NOT reveal this to the user for security.
-            // Still send a success response to prevent email enumeration.
-            console.log(`Password reset requested for non-existent email: ${email}`);
+            console.log(`[Auth ReqPassReset] Password reset requested for non-existent email: ${email}`);
         }
 
-        // Always send a success response regardless of whether the user was found
+        // Always send a success response regardless of whether the user was found or if errors occurred server-side (except critical ones like DB down)
         res.status(200).json({ message: 'If your email address is registered, you will receive a password reset link shortly.' });
 
     } catch (error) {
-        console.error('Error requesting password reset:', error);
-        // Generic error to the user
+        // This catch block is for truly unexpected errors (e.g. Supabase client itself failing catastrophically)
+        console.error('[Auth ReqPassReset] Critical error requesting password reset:', error.message);
+        // Generic error to the user in case of unexpected server issues
         next(new Error('Failed to process password reset request. Please try again later.')); 
     }
 };
@@ -328,61 +440,91 @@ const resetPassword = async (req, res, next) => {
     }
 
     try {
-        // 1. Hash the incoming token to match the one stored in DB
+        if (!isSupabaseReady()) {
+            console.error('[Auth ResetPassword] Supabase client not ready.');
+            return res.status(503).json({ message: 'Server is temporarily unavailable.' });
+        }
+
+        // 1. Hash the incoming token to match the one stored in DB (remains the same)
         const hashedToken = crypto
             .createHash('sha256')
             .update(token)
             .digest('hex');
 
-        // 2. Find user by the *hashed* token and check expiry
-        // NocoDB filter syntax needs care here.
-        // where=(password_reset_token,eq,HASHED_TOKEN)~and(password_reset_expires,gt,NOW_ISO)
+        // 2. Find user by the *hashed* token and check expiry using Supabase
         const nowISO = new Date().toISOString();
-        const filterString = `(${COLS.PASSWORD_RESET_TOKEN},eq,${hashedToken})~and(${COLS.PASSWORD_RESET_EXPIRES},gt,${nowISO})`;
         
-        // Use the generic findUsers (or adapt/create a specific one if preferred)
-        const users = await NocoDBService.findUsers(filterString);
+        const { data: users, error: findUserError } = await supabase
+            .from(USERS_TABLE)
+            .select(`${USER_COL_ID}, ${USER_COL_EMAIL}`) // Select ID and email for later use
+            .eq(USER_COL_PASSWORD_RESET_TOKEN, hashedToken)
+            .gt(USER_COL_PASSWORD_RESET_EXPIRES, nowISO); // Check that expiry is greater than now
+            // .maybeSingle(); // If tokens are unique, single() or maybeSingle() is appropriate
+            // If multiple users could somehow have the same valid token (bad), then remove .maybeSingle()
+            // For now, assuming it could be multiple if DB constraints aren't strict, then we take users[0]
+
+        if (findUserError) {
+            console.error('[Auth ResetPassword] Error finding user by reset token:', findUserError.message);
+            return res.status(500).json({ message: 'Error validating reset token. Please try again.' });
+        }
 
         if (!users || users.length === 0) {
-            console.log('Password reset attempt with invalid or expired token.');
+            console.log('[Auth ResetPassword] Password reset attempt with invalid or expired token.');
             return res.status(400).json({ message: 'Password reset token is invalid or has expired.' });
         }
 
-        // Assuming tokens are unique, there should only be one user
-        const user = users[0];
-        const userId = user[COLS.USER_ID];
+        // Assuming tokens should be unique for a valid reset, take the first user found.
+        const userToReset = users[0];
+        const userId = userToReset[USER_COL_ID];
+        const userEmail = userToReset[USER_COL_EMAIL];
 
-        // 3. Hash the new password
+        // 3. Hash the new password (remains the same)
         const salt = await bcrypt.genSalt(10);
         const newHashedPassword = await bcrypt.hash(newPassword, salt);
 
-        // 4. Update the user's password and clear reset token fields
-        await NocoDBService.updateUser(userId, {
-            [COLS.PASSWORD]: newHashedPassword,
-            [COLS.PASSWORD_RESET_TOKEN]: null,
-            [COLS.PASSWORD_RESET_EXPIRES]: null,
-        });
+        // 4. Update the user's password and clear reset token fields in Supabase
+        const { error: updateError } = await supabase
+            .from(USERS_TABLE)
+            .update({
+                [USER_COL_PASSWORD]: newHashedPassword,
+                [USER_COL_PASSWORD_RESET_TOKEN]: null,
+                [USER_COL_PASSWORD_RESET_EXPIRES]: null,
+            })
+            .eq(USER_COL_ID, userId);
 
-        console.log(`Password successfully reset for user ID: ${userId}`);
+        if (updateError) {
+            console.error(`[Auth ResetPassword] Failed to update password for user ID: ${userId}:`, updateError.message);
+            return res.status(500).json({ message: 'Failed to reset password. Please try again later.' });
+        }
+
+        console.log(`[Auth ResetPassword] Password successfully reset for user ID: ${userId}`);
         
-        // Optionally, send a confirmation email
-        try {
-            await sendEmail({ 
-                to: user[COLS.EMAIL], 
-                subject: 'Your Trendy Bot Password Has Been Changed', 
-                text: 'Your password for Trendy Bot was successfully changed. If you did not make this change, please contact support immediately.', 
-                html: '<p>Your password for Trendy Bot was successfully changed. If you did not make this change, please contact support immediately.</p>'
-            });
-        } catch (emailError) {
-            console.error(`Failed to send password change confirmation email to user ${userId}:`, emailError);
-            // Don't fail the main request if email fails
+        // Optionally, send a confirmation email (sendEmail service usage remains the same)
+        if (userEmail) {
+            try {
+                await sendEmail({ 
+                    to: userEmail, 
+                    subject: 'Your Trendy Bot Password Has Been Changed', 
+                    text: 'Your password for Trendy Bot was successfully changed. If you did not make this change, please contact support immediately.', 
+                    html: '<p>Your password for Trendy Bot was successfully changed. If you did not make this change, please contact support immediately.</p>'
+                });
+            } catch (emailError) {
+                console.error(`[Auth ResetPassword] Failed to send password change confirmation email to user ${userId}:`, emailError.message);
+                // Don't fail the main request if email fails, just log it.
+            }
+        } else {
+            console.warn(`[Auth ResetPassword] User email not found for user ID: ${userId}, cannot send confirmation email.`);
         }
 
         res.status(200).json({ message: 'Password reset successfully.' });
 
     } catch (error) {
-        console.error('Error resetting password:', error);
-        next(new Error('Failed to reset password. Please try again later.'));
+        console.error('[Auth ResetPassword] Critical error resetting password:', error.message);
+        if (error instanceof Error) {
+            next(error);
+        } else {
+            next(new Error(error.message || 'An unexpected error occurred while resetting password.'));
+        }
     }
 };
 
