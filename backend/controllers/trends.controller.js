@@ -36,6 +36,11 @@ const getMyAlerts = async (req, res, next) => {
     }
 
     try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 20;
+        const offset = (page - 1) * limit;
+        const rangeTo = offset + limit - 1;
+
         // const filterString = `(${TA_COL_USER_ID},eq,${req.user.id})`; // NocoDB filter
         
         const { data: alerts, error, count } = await supabase
@@ -43,17 +48,22 @@ const getMyAlerts = async (req, res, next) => {
             .select('*', { count: 'exact' })
             .eq(TA_COL_USER_ID, userId)
             .order(TA_COL_TRIGGERED_AT, { ascending: false })
-            .limit(100) // Example limit
-            .offset(0);  // Example offset, consider pagination params from req.query
+            .range(offset, rangeTo);
 
         if (error) {
             console.error('[TrendsController][getMyAlerts] Supabase error:', error.message);
             return next(error);
         }
         
-        // Supabase returns `count` in the response when { count: 'exact' } is used.
-        // You might want to structure pagination info based on this.
-        res.json({ alerts: alerts || [], pagination: { totalCount: count } });
+        res.json({
+            alerts: alerts || [],
+            pagination: {
+                totalItems: count,
+                currentPage: page,
+                pageSize: limit,
+                totalPages: Math.ceil(count / limit)
+            }
+        });
 
     } catch (error) {
         console.error('[TrendsController] Error in getMyAlerts:', error);
