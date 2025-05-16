@@ -450,9 +450,22 @@ class YoutubeService {
             return result;
 
     } catch (error) {
-            console.error(`[VS_SVC_ERR] Error for ${actualValidHandle}, (ID: ${actualChannelId}), range ${range}:`, error.message);
+            // --- Enhanced Logging ---
+            let errorDetails = error.message;
+            if (error.cause) { // Node.js >= 16.9.0 for error.cause
+                errorDetails += ` | Cause: ${typeof error.cause === 'object' ? JSON.stringify(error.cause) : String(error.cause)}`;
+            }
+            // Add stack trace to errorDetails for concise logging, but also log the full object.
+            // Limiting stack trace length in the primary error message for readability.
+            const stackTrace = error.stack ? error.stack.split('\n').slice(0, 5).join('\n') : 'N/A';
+            errorDetails += ` | Stack (first 5 lines): ${stackTrace}`;
+            
+            console.error(`[VS_SVC_ERR_FULL_OBJECT] Full error object for ${actualValidHandle} (ID: ${actualChannelId}), range ${range}:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
+            console.error(`[VS_SVC_ERR] Detailed error for ${actualValidHandle}, (ID: ${actualChannelId}), range ${range}:`, errorDetails);
+            // --- End Enhanced Logging ---
+
             const newError = new Error(`Primary analytics provider request failed.`); // Generic User Message
-            newError.statusCode = error.statusCode || 500;
+            newError.statusCode = error.statusCode || 500; // error.statusCode might not exist if it's not an HTTP error object we constructed
             newError.viewStatsError = true; // Internal flag
             newError.channelIdForFallback = actualChannelId; 
             throw newError;
