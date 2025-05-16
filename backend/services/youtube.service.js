@@ -1,5 +1,5 @@
 const { google } = require('googleapis');
-// const axios = require('axios'); // Removed as it is unused
+const axios = require('axios'); // ADDED axios
 const { supabase, isSupabaseReady } = require('./supabase.service');
 const { webcrypto } = require('node:crypto'); // Added for Web Crypto API
 const fs = require('node:fs').promises; // For file system operations
@@ -377,38 +377,65 @@ class YoutubeService {
         const vsRange = convertToViewStatsRange(range);
         const viewStatsUrl = `https://api.viewstats.com/channels/${encodeURIComponent(actualValidHandle)}/stats?range=${vsRange}&groupBy=daily&sortOrder=ASC&withRevenue=true&withEvents=true&withBreakdown=false&withToday=false`;
         
-        console.log(`[VS_SVC] Attempting ViewStats for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
+        console.log(`[VS_SVC] Attempting ViewStats (axios) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
 
         try {
-            const response = await fetch(viewStatsUrl, {
+            const response = await axios.get(viewStatsUrl, {
                 headers: {
                     'Authorization': `Bearer ${VIEWSTATS_BEARER_TOKEN}`,
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' // Example User-Agent
-                }
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                responseType: 'arraybuffer' // Crucial for getting the response as an ArrayBuffer
             });
 
-            if (!response.ok) {
+            if (response.status !== 200) { // AXIOS CHECK
                 let errorBody = 'Unknown error';
                 try {
-                    errorBody = await response.text(); // Try to get error body for logging
+                    // For axios, response.data will be the ArrayBuffer on success, or potentially an error object/string on failure if not 200
+                    // We'll try to decode it as text if it's not what we expect for an error body.
+                    if (response.data && typeof response.data !== 'string' && !(response.data instanceof ArrayBuffer)) {
+                        errorBody = JSON.stringify(response.data);
+                    } else if (typeof response.data === 'string'){
+                        errorBody = response.data;
+                    } else {
+                        // If it's an ArrayBuffer even on error, try to decode as text, might be an error message
+                        errorBody = Buffer.from(response.data).toString('utf-8'); 
+                    }
                 } catch (e) { /* ignore */ }
                 // Obfuscated log
-                console.warn(`[VS_SVC] API request failed for ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")} with status ${response.status}: ${errorBody.substring(0, 100)}`);
-                // Throw an error that getAggregatedChannelData can catch to trigger fallback
+                console.warn(`[VS_SVC] (axios) API request failed for ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")} with status ${response.status}: ${errorBody.substring(0, 100)}`);
                 const error = new Error(`ViewStats API request failed: ${response.status} - ${errorBody.substring(0,100)}`);
                 error.statusCode = response.status; 
                 error.viewStatsError = true;
-                error.channelIdForFallback = actualChannelId; // Important for the caller to know which ID to fallback on
+                error.channelIdForFallback = actualChannelId;
                 throw error; 
             }
 
-            const decryptedData = await decryptViewStatsResponse(response);
+            // For axios with arraybuffer, response.data is the ArrayBuffer
+            const encryptedBuffer = response.data; 
 
-            // const tempDir = path.join(__dirname, '..' ,'tmp');
-            // await fs.mkdir(tempDir, { recursive: true });
-            // const filePath = path.join(tempDir, `viewstats_decrypted_${correctedIdentifier.replace('@','')}_${range}.json`);
-            // await fs.writeFile(filePath, JSON.stringify(decryptedData, null, 2));
-            // console.log(`[VS_SVC] Decrypted data for ${correctedIdentifier} saved to ${filePath}`);
+            // --- Logging for encryptedBuffer (already exists from previous step) ---
+            console.log(`[VS_DECRYPT] Encrypted buffer length: ${encryptedBuffer.byteLength}`);
+            const firstBytes = new Uint8Array(encryptedBuffer.slice(0, 16));
+            const firstBytesHex = Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+            console.log(`[VS_DECRYPT] Encrypted buffer first 16 bytes (hex): ${firstBytesHex}`);
+            // --- END LOGGING ---
+
+            // Pass the buffer directly to decryptViewStatsResponse (assuming it's modified to accept buffer)
+            // OR, mimic the structure decryptViewStatsResponse expects if it needs a response-like object.
+            // For simplicity, let's assume decryptViewStatsResponse is adapted or we pass the buffer.
+            // The current decryptViewStatsResponse takes a `response` object and calls `response.arrayBuffer()`.
+            // We need to adapt that or this. Let's adapt decryptViewStatsResponse.
+
+            // We need to pass the ArrayBuffer directly to the decryption logic.
+            // The original decryptViewStatsResponse calls response.arrayBuffer(). We now have the buffer.
+            // For now, I'll keep the decryptViewStatsResponse signature and create a mock response object here.
+            // A better solution would be to refactor decryptViewStatsResponse to accept an ArrayBuffer directly.
+            const mockResponseForDecryption = {
+                arrayBuffer: async () => encryptedBuffer // Simulate the arrayBuffer method
+            };
+
+            const decryptedData = await decryptViewStatsResponse(mockResponseForDecryption);
 
             if (!decryptedData || !decryptedData.data || !Array.isArray(decryptedData.data)) {
                 console.warn('[VS_SVC] Decrypted ViewStats data is not in expected format or data array is missing for:', actualValidHandle);
