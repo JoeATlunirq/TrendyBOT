@@ -70,6 +70,7 @@ const lookupChannel = asyncHandler(async (req, res) => {
                         id: cachedChannel[YoutubeService.CH_COL_CHANNEL_ID],
                         title: cachedChannel[YoutubeService.CH_COL_TITLE],
                         thumbnailUrl: cachedChannel[YoutubeService.CH_COL_THUMBNAIL_URL],
+                        channelHandle: cachedChannel[YoutubeService.CH_COL_HANDLE] || null,
                         // subscriberCount: cachedChannel[YoutubeService.CH_COL_SUBSCRIBER_COUNT], // Optional: add if needed by frontend
                         source: 'cache'
                     });
@@ -129,6 +130,7 @@ const lookupChannel = asyncHandler(async (req, res) => {
              id: channelDataFromApi.id,
              title: snippet.title || 'Unknown Title',
              thumbnailUrl: snippet.thumbnails?.default?.url || snippet.thumbnails?.medium?.url || null,
+             channelHandle: (snippet.customUrl && snippet.customUrl.startsWith('@')) ? snippet.customUrl : null,
              subscriberCount: statistics.hiddenSubscriberCount ? undefined : parseInt(statistics.subscriberCount, 10),
              source: 'api'
          };
@@ -182,37 +184,42 @@ const lookupChannel = asyncHandler(async (req, res) => {
 // @route   POST /api/youtube/channel-data
 // @access  Private
 const getChannelData = asyncHandler(async (req, res) => {
-    const { channelIds, forceRefresh, timeFrame } = req.body;
+    const { channelIds, channelHandles, forceRefresh, timeFrame } = req.body; // channelHandles is the array from frontend
 
-    if (!channelIds || !Array.isArray(channelIds) || channelIds.length === 0) {
-        res.status(400);
-        throw new Error('Please provide a valid array of channelIds');
+    // Basic validation
+    if (!Array.isArray(channelIds) || channelIds.length === 0) {
+        return res.status(400).json({ message: 'Please provide a valid array of channelIds.' });
     }
+    // channelHandles can be an array, potentially with null/undefined if frontend didn't have a handle for an ID.
+    // It should correspond to channelIds if present. If not present or not an array, service will handle it.
+    if (channelHandles && (!Array.isArray(channelHandles) || channelHandles.length !== channelIds.length)) {
+        console.warn('[youtube.controller] channelHandles was provided but is not an array or does not match length of channelIds. Proceeding with caution.');
+        // The service layer will need to be robust to this. For now, we'll pass it along.
+        // Ideally, frontend ensures this correspondence.
+    }
+    
+    const validTimeFrames = ["1d", "7d", "28d", "90d", "365d", "max"]; 
+    let actualTimeFrame = timeFrame || "28d"; 
 
-    // Validate timeFrame if provided
-    const validTimeFrames = ["last_24_hours", "last_7_days", "last_30_days", "all_time"];
-    if (timeFrame && !validTimeFrames.includes(timeFrame)) {
-        res.status(400);
-        throw new Error(`Invalid timeFrame. Must be one of: ${validTimeFrames.join(', ')}`);
+    if (!validTimeFrames.includes(actualTimeFrame)) {
+        return res.status(400).json({ message: `Invalid timeFrame. Must be one of: ${validTimeFrames.join(', ')}` });
     }
 
     try {
-        // Pass forceRefresh and timeFrame to the service method
-        const data = await YoutubeService.getAggregatedChannelData(channelIds, forceRefresh, timeFrame);
+        // Pass both arrays to the service. The service will handle the logic
+        // of choosing the best identifier for ViewStats for each channel.
+        const data = await YoutubeService.getAggregatedChannelData(
+            channelIds, // Array of actual YouTube Channel IDs
+            channelHandles, // Array of (frontend-known-handle or fallback-ID-from-frontend)
+            forceRefresh, 
+            actualTimeFrame
+        );
         
-        if (!data || data.length === 0 && channelIds.length > 0) {
-            // This case means service ran but found nothing, perhaps IDs were invalid or no data in NocoDB
-            // The service itself logs warnings for individual channel misses.
-            // Consider if a 404 is appropriate if ALL channels yield no data.
-            // For now, returning 200 with empty array or array of errors from service.
-        }
-        
-        res.status(200).json(data); // Send the actual data back
+        res.status(200).json(data); 
 
     } catch (error) {
-        // Catch errors thrown by the service (e.g., NocoDB connection issues, config errors)
-        console.error('[youtube.controller] Error calling YoutubeService.getAggregatedChannelData:', error.message);
-        res.status(500).json({ message: error.message || 'Failed to process channel data' });
+        console.error('[youtube.controller] Error calling YoutubeService.getAggregatedChannelData:', error.message, error.stack);
+        res.status(error.statusCode || 500).json({ message: error.message || 'Failed to process channel data' });
     }
 });
 

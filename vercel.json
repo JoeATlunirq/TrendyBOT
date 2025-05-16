@@ -17,10 +17,6 @@
     {
       "source": "/api/(.*)",
       "destination": "/backend/server.js"
-    },
-    {
-      "source": "/((?!api/|_next/|static/|assets/|images/|lovable-uploads/|Design/|favicon.ico).*)",
-      "destination": "/index.html"
     }
   ]
 } 

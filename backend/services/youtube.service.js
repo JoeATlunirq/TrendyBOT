@@ -1,6 +1,24 @@
 const { google } = require('googleapis');
 // const axios = require('axios'); // Removed as it is unused
 const { supabase, isSupabaseReady } = require('./supabase.service');
+const { webcrypto } = require('node:crypto'); // Added for Web Crypto API
+const fs = require('node:fs').promises; // For file system operations
+const path = require('node:path'); // For path manipulation
+
+// Helper function to map frontend timeframes to ViewStats API 'range' query param values
+function convertToViewStatsRange(timeFrame) {
+    switch (timeFrame) {
+        case "1d": return "1";       // ViewStats might use "1" for yesterday, or might have a specific "today" param if needed for true 24h
+        case "7d": return "7";
+        case "28d": return "28";
+        case "90d": return "90";
+        case "365d": return "365";
+        case "max": return "alltime";
+        default:
+            console.warn(`[convertToViewStatsRange] Unknown timeFrame '${timeFrame}', defaulting to '28'.`);
+            return "28"; 
+    }
+}
 
 const serviceApiKeyManagerCallbacks = {
   onKeyUsed: (keyName, callsToday) => {
@@ -32,7 +50,8 @@ const CH_COL_ID = 'id'; // PK
 const CH_COL_CHANNEL_ID = 'channel_id'; // YouTube's Channel ID
 const CH_COL_TITLE = 'title';
 const CH_COL_DESCRIPTION = 'description';
-const CH_COL_CUSTOM_URL = 'custom_url';
+const CH_COL_CUSTOM_URL = 'custom_url'; // This might contain the handle
+const CH_COL_HANDLE = 'channel_handle'; // <<< NEW: Specific column for the @handle
 const CH_COL_THUMBNAIL_URL = 'thumbnail_url';
 const CH_COL_THUMBNAIL_LAST_UPDATED = 'thumbnail_last_updated';
 const CH_COL_PUBLISHED_AT = 'published_at'; // Channel's publish date
@@ -71,7 +90,87 @@ const youtube = google.youtube('v3'); // Initialize YouTube client
 const channelDataCache = new Map();
 const CACHE_DURATION_MS = 1 * 60 * 60 * 1000; // 1 hour for aggregated results
 
+// --- ViewStats Decryption Logic ---
+const VIEWSTATS_IV_B64 = "Wzk3LCAxMDksIC0xMDAsIC05MCwgMTIyLCAtMTI0LCAxMSwgLTY5LCAtNDIsIDExNSwgLTU4LCAtNjcsIDQzLCAtNzUsIDMxLCA3NF0=";
+const VIEWSTATS_KEY_B64 = "Wy0zLCAtMTEyLCAxNSwgLTEyNCwgLTcxLCAzMywgLTg0LCAxMDksIDU3LCAtMTI3LCAxMDcsIC00NiwgMTIyLCA0OCwgODIsIC0xMjYsIDQ3LCA3NiwgLTEyNywgNjUsIDc1LCAxMTMsIC0xMjEsIDg5LCAtNzEsIDUwLCAtODMsIDg2LCA5MiwgLTQ2LCA0OSwgNTZd";
+const VIEWSTATS_BEARER_TOKEN = "32ev9m0qggn227ng1rgpbv5j8qllas8uleujji3499g9had6oj7f0ltnvrgi00cq"; // Hardcoded for now
+
+async function decryptViewStatsResponse(response) {
+  const iv = new Uint8Array(JSON.parse(atob(VIEWSTATS_IV_B64)));
+  const key = new Uint8Array(JSON.parse(atob(VIEWSTATS_KEY_B64)));
+
+  const encryptedBuffer = await response.arrayBuffer();
+
+  // Use webcrypto from node:crypto
+  const cryptoKey = await webcrypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"]
+  );
+
+  const decryptedBuffer = await webcrypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    encryptedBuffer
+  );
+
+  const decodedText = new TextDecoder("utf-8").decode(decryptedBuffer);
+  return JSON.parse(decodedText);
+}
+
+// Helper function to convert range string (e.g., "7d", "28d") to a Date object
+function getDateFromRange(rangeString) {
+    const now = new Date();
+    if (rangeString === "max" || !rangeString) return null; // No date filter for "all time" videos
+
+    const numMatch = rangeString.match(/^(\d+)/);
+    if (!numMatch) {
+        console.warn(`[getDateFromRange] Invalid rangeString format: ${rangeString}, defaulting to 28 days.`);
+        now.setDate(now.getDate() - 28);
+        return now;
+    }
+    const num = parseInt(numMatch[1]);
+    const unit = rangeString.slice(numMatch[1].length); // e.g., "d" from "28d"
+
+    if (isNaN(num) || unit !== 'd') {
+        console.warn(`[getDateFromRange] Invalid rangeString unit or number: ${rangeString}, defaulting to 28 days.`);
+        now.setDate(now.getDate() - 28);
+        return now;
+    }
+
+    now.setDate(now.getDate() - num);
+    return now;
+}
+
 class YoutubeService {
+    async _getHandleFromDb(channelId) {
+        if (!isSupabaseReady() || !channelId) {
+            console.warn('[YoutubeService._getHandleFromDb] Supabase not ready or no channelId provided.');
+            return null;
+        }
+        try {
+            const { data, error } = await supabase
+                .from(CHANNELS_TABLE)
+                .select(`${CH_COL_HANDLE}`)
+                .eq(CH_COL_CHANNEL_ID, channelId)
+                .single(); // We expect at most one channel per ID
+
+            if (error && error.code !== 'PGRST116') { // PGRST116 means no rows found, which is not an error here
+                console.error(`[YoutubeService._getHandleFromDb] Error fetching handle for ${channelId}:`, error.message);
+                return null;
+            }
+            if (data && data[CH_COL_HANDLE] && typeof data[CH_COL_HANDLE] === 'string' && data[CH_COL_HANDLE].startsWith('@')) {
+                return data[CH_COL_HANDLE];
+            }
+            return null;
+        } catch (catchError) {
+            console.error(`[YoutubeService._getHandleFromDb] Catch block error for ${channelId}:`, catchError.message);
+            return null;
+        }
+    }
+
     async _handleYoutubeApiError(error, apiKeyToReport, context) {
         const apiError = error.response?.data?.error;
         let message = apiError?.message || `YouTube API Error in ${context}: ${error.message}`;
@@ -113,7 +212,8 @@ class YoutubeService {
                 CH_COL_SUBSCRIBER_COUNT,
                 CH_COL_THUMBNAIL_URL,
                 CH_COL_LAST_FETCHED_AT,
-                CH_COL_UPLOADS_PLAYLIST_ID
+                CH_COL_UPLOADS_PLAYLIST_ID,
+                CH_COL_HANDLE // <<< ADDED: Retrieve the handle
             ].join(',');
 
             const { data, error } = await supabase
@@ -175,17 +275,18 @@ class YoutubeService {
             throw new Error('Supabase client not ready');
         }
         
-        // channelDataFromApi is expected to be an object with keys matching YT API response structure
-        // We need to map it to our CH_COL_ constants.
+        const snippet = channelDataFromApi.snippet || {};
+        const customUrl = snippet.customUrl;
+        const handle = customUrl && customUrl.startsWith('@') ? customUrl : null;
+
         const recordToUpsert = {
             [CH_COL_CHANNEL_ID]: channelDataFromApi.id, // This is the YouTube Channel ID
-            [CH_COL_TITLE]: channelDataFromApi.snippet?.title,
-            [CH_COL_DESCRIPTION]: channelDataFromApi.snippet?.description,
-            [CH_COL_CUSTOM_URL]: channelDataFromApi.snippet?.customUrl,
-            [CH_COL_PUBLISHED_AT]: channelDataFromApi.snippet?.publishedAt,
-            [CH_COL_THUMBNAIL_URL]: channelDataFromApi.snippet?.thumbnails?.default?.url,
-            // Use CH_COL_THUMBNAIL_LAST_UPDATED if you want to track thumbnail changes specifically
-            // For now, CH_COL_LAST_FETCHED_AT covers general data refresh.
+            [CH_COL_TITLE]: snippet.title,
+            [CH_COL_DESCRIPTION]: snippet.description,
+            [CH_COL_CUSTOM_URL]: customUrl, // Store the original customUrl
+            [CH_COL_HANDLE]: handle, // <<< ADDED: Store the extracted @handle
+            [CH_COL_PUBLISHED_AT]: snippet.publishedAt,
+            [CH_COL_THUMBNAIL_URL]: snippet.thumbnails?.default?.url,
             [CH_COL_VIEW_COUNT]: parseInt(channelDataFromApi.statistics?.viewCount, 10) || 0,
             [CH_COL_SUBSCRIBER_COUNT]: parseInt(channelDataFromApi.statistics?.subscriberCount, 10) || 0,
             [CH_COL_VIDEO_COUNT]: parseInt(channelDataFromApi.statistics?.videoCount, 10) || 0,
@@ -251,260 +352,378 @@ class YoutubeService {
         }
     }
 
-    async getAggregatedChannelData(channelIds, forceRefresh = false, timeFrame = "last_30_days") {
-        console.log(`[YoutubeService] getAggregatedChannelData for IDs: ${channelIds.join(', ')}, forceRefresh: ${forceRefresh}, timeFrame: ${timeFrame}`);
+    // Modified to accept ONLY a valid, confirmed @handle for the ViewStats attempt.
+    async fetchViewStatsChannelData(actualValidHandle, actualChannelId, range) {
+        // actualValidHandle is now expected to be a confirmed @handle.
+        const vsRange = convertToViewStatsRange(range);
+        const viewStatsUrl = `https://api.viewstats.com/channels/${encodeURIComponent(actualValidHandle)}/stats?range=${vsRange}&groupBy=daily&sortOrder=ASC&withRevenue=true&withEvents=true&withBreakdown=false&withToday=false`;
         
-        const uniqueChannelIds = [...new Set(channelIds)];
-        const results = [];
-        const cacheKey = `${uniqueChannelIds.join(',')}_${timeFrame}`;
+        console.log(`[VS_SVC] Attempting ViewStats for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
 
-        if (!forceRefresh) {
-            const cachedResult = channelDataCache.get(cacheKey);
-            if (cachedResult && (Date.now() - cachedResult.timestamp < CACHE_DURATION_MS)) {
-                console.log(`[YoutubeService] Returning in-memory cached data for key: ${cacheKey}`);
-                return cachedResult.data;
+        try {
+            const response = await fetch(viewStatsUrl, {
+                headers: {
+                    'Authorization': `Bearer ${VIEWSTATS_BEARER_TOKEN}`,
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' // Example User-Agent
+                }
+            });
+
+            if (!response.ok) {
+                let errorBody = 'Unknown error';
+                try {
+                    errorBody = await response.text(); // Try to get error body for logging
+                } catch (e) { /* ignore */ }
+                // Obfuscated log
+                console.warn(`[VS_SVC] API request failed for ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")} with status ${response.status}: ${errorBody.substring(0, 100)}`);
+                // Throw an error that getAggregatedChannelData can catch to trigger fallback
+                const error = new Error(`ViewStats API request failed: ${response.status} - ${errorBody.substring(0,100)}`);
+                error.statusCode = response.status; 
+                error.viewStatsError = true;
+                error.channelIdForFallback = actualChannelId; // Important for the caller to know which ID to fallback on
+                throw error; 
             }
+
+            const decryptedData = await decryptViewStatsResponse(response);
+
+            // const tempDir = path.join(__dirname, '..' ,'tmp');
+            // await fs.mkdir(tempDir, { recursive: true });
+            // const filePath = path.join(tempDir, `viewstats_decrypted_${correctedIdentifier.replace('@','')}_${range}.json`);
+            // await fs.writeFile(filePath, JSON.stringify(decryptedData, null, 2));
+            // console.log(`[VS_SVC] Decrypted data for ${correctedIdentifier} saved to ${filePath}`);
+
+            if (!decryptedData || !decryptedData.data || !Array.isArray(decryptedData.data)) {
+                console.warn('[VS_SVC] Decrypted ViewStats data is not in expected format or data array is missing for:', actualValidHandle);
+                const error = new Error('ViewStats decrypted data malformed');
+                error.statusCode = 500; // Internal processing error
+                error.viewStatsError = true;
+                error.channelIdForFallback = actualChannelId;
+                throw error;
+            }
+
+            const dailyRecords = decryptedData.data;
+            // --- ADDED LOGGING --- 
+            if (dailyRecords && dailyRecords.length > 0) {
+              console.log('[VS_SVC_RAW_DAILY] First 2 daily records from ViewStats:', JSON.stringify(dailyRecords.slice(0, 2)));
+            }
+            // --- END ADDED LOGGING ---
+            let totalViewsInPeriod = 0;
+            let totalSubsInPeriod = 0;
+            // Attempt to get videosPublishedCount directly from ViewStats response
+            const vsVideosPublishedInPeriod = decryptedData.videosPublishedCount;
+
+            dailyRecords.forEach(record => {
+                totalViewsInPeriod += record.viewCountDelta || 0;
+                totalSubsInPeriod += record.subscriberCountDelta || 0;
+            });
+
+            const result = {
+                id: actualChannelId, // Use the actualChannelId for consistency in the merged result
+                channelHandle: actualValidHandle, // The valid handle used for ViewStats
+                source: 'viewstats_success_generic', // Generic source indicator
+                viewsGainedInPeriod: totalViewsInPeriod,
+                subsGainedInPeriod: totalSubsInPeriod,
+                currentTotalViews: decryptedData.totalViews, 
+                currentSubscriberCount: decryptedData.totalSubscribers, 
+                dailyChartData: dailyRecords.map(r => ({
+                    date: r.date,
+                    viewCountDelta: r.viewCountDelta,
+                    subscriberCountDelta: r.subscriberCountDelta,
+                    totalViews: r.totalViewCount, 
+                    totalSubscribers: r.totalSubscriberCount 
+                })),
+                timeFrameUsed: range, 
+                error: null,
+                errorType: null
+            };
+            return result;
+
+    } catch (error) {
+            console.error(`[VS_SVC_ERR] Error for ${actualValidHandle}, (ID: ${actualChannelId}), range ${range}:`, error.message);
+            const newError = new Error(`Primary analytics provider request failed.`); // Generic User Message
+            newError.statusCode = error.statusCode || 500;
+            newError.viewStatsError = true; // Internal flag
+            newError.channelIdForFallback = actualChannelId; 
+            throw newError;
+        }
+    }
+
+    async getAggregatedChannelData(channelIds, frontendProvidedHandles, forceRefresh = false, viewStatsRange = "28d") {
+        if (!channelIds || channelIds.length === 0) {
+            return [];
         }
 
-        let publishedAfterDate;
-        const now = new Date();
-        switch (timeFrame) {
-            case "last_24_hours":
-                publishedAfterDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-                break;
-            case "last_7_days":
-                publishedAfterDate = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
-                break;
-            case "all_time":
-                publishedAfterDate = null;
-                break;
-            case "last_30_days":
-            default:
-                publishedAfterDate = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-                break;
+        let handlesToProcess = frontendProvidedHandles;
+        if (!Array.isArray(handlesToProcess) || handlesToProcess.length !== channelIds.length) {
+            console.warn('[YoutubeService.getAggregatedChannelData] frontendProvidedHandles is missing, not an array, or length mismatch. Will primarily rely on DB lookup for handles.');
+            handlesToProcess = new Array(channelIds.length).fill(null);
         }
-        console.log(`[YoutubeService] Video stats will be calculated for videos published after: ${publishedAfterDate?.toISOString() || 'N/A (All Time)'}`);
 
-        const supabaseChannelsData = await this.getChannelsFromSupabase(uniqueChannelIds);
-        const supabaseChannelsMap = new Map(supabaseChannelsData.map(c => [c[CH_COL_CHANNEL_ID], c]));
+        const results = await Promise.all(channelIds.map(async (currentId, index) => {
+            const frontendHandleInput = handlesToProcess[index]; // This could be @handle, ID, or null
+            let actualHandleToUseWithViewStats = null;
 
-        for (const id of uniqueChannelIds) { // 'id' here is the YouTube Channel ID
-            let channelResult = { id, name: 'N/A', thumbnailUrl: null, currentSubscriberCount: 0, source: 'Error', error: null };
-            const supabaseChannel = supabaseChannelsMap.get(id);
-            let pfpIsFresh = false;
-
-            if (supabaseChannel && supabaseChannel[CH_COL_THUMBNAIL_URL] && supabaseChannel[CH_COL_LAST_FETCHED_AT]) {
-                const lastUpdatedDate = new Date(supabaseChannel[CH_COL_LAST_FETCHED_AT]);
-                const diffDays = (now.getTime() - lastUpdatedDate.getTime()) / (1000 * 60 * 60 * 24);
-                if (diffDays <= CHANNEL_DATA_STALE_DAYS) {
-                    pfpIsFresh = true;
+            if (typeof frontendHandleInput === 'string' && frontendHandleInput.startsWith('@')) {
+                actualHandleToUseWithViewStats = frontendHandleInput;
+            } else {
+                const dbHandle = await this._getHandleFromDb(currentId);
+                if (dbHandle) {
+                    actualHandleToUseWithViewStats = dbHandle;
                 }
             }
 
-            let liveApiData = null; // This will hold the direct response from youtube.channels.list
-            let currentApiKey = null;
-
-            if (forceRefresh || !pfpIsFresh || !supabaseChannel) {
-                const manager = await apiKeyManagerPromise;
-                currentApiKey = await manager.getKey(); 
-                if (!currentApiKey) {
-                    channelResult.error = 'API keys exhausted';
-                    channelResult.source = 'Supabase (Stale/Missing) + API Key Error';
-                    if(supabaseChannel) {
-                        channelResult.name = supabaseChannel[CH_COL_TITLE] || 'N/A';
-                        channelResult.thumbnailUrl = supabaseChannel[CH_COL_THUMBNAIL_URL];
-                        channelResult.currentSubscriberCount = parseInt(supabaseChannel[CH_COL_SUBSCRIBER_COUNT], 10) || 0;
-                        channelResult.uploadsPlaylistId = supabaseChannel[CH_COL_UPLOADS_PLAYLIST_ID];
+            if (actualHandleToUseWithViewStats) {
+                try {
+                    let viewStatsData = await this.fetchViewStatsChannelData(actualHandleToUseWithViewStats, currentId, viewStatsRange);
+                    return viewStatsData;
+                } catch (viewStatsError) { // Error from fetchViewStatsChannelData
+                    console.warn(`[AggData] Primary source failed for handle ${actualHandleToUseWithViewStats} (ID ${currentId}). Error: ${viewStatsError.message}. Fallback to alternative source.`);
+                    try {
+                        const ytData = await this.fetchChannelDataFromYouTubeAPI(currentId, viewStatsRange, forceRefresh);
+                        return {
+                            ...ytData, // ytData also won't have videosPublishedInPeriod or avgViewsPerVideoInPeriod
+                            id: currentId,
+                            channelHandle: actualHandleToUseWithViewStats, // Keep the handle that was attempted
+                            error: `${viewStatsError.message} Fallback to alternative source initiated.`, // More generic now
+                            errorType: viewStatsError.statusCode === 404 ? 'primary_source_not_found' : 'primary_source_api_error', // Generic error type
+                            source: 'alternative_source_fallback', // Generic source
+                        };
+                    } catch (youtubeApiError) {
+                        console.error(`[AggData] Alternative source fallback ALSO FAILED for ${currentId} (attempted handle ${actualHandleToUseWithViewStats}):`, youtubeApiError.message);
+                        return {
+                            id: currentId,
+                            name: 'Error Fetching Name',
+                            channelHandle: actualHandleToUseWithViewStats,
+                            errorType: 'alternative_source_api_error', // Generic
+                            source: 'alternative_source_fallback', // Generic
+                            timeFrameUsed: viewStatsRange,
+                        };
                     }
-                    results.push(channelResult);
-                    console.warn(`[YoutubeService] No API key available for channel ${id}.`);
-                    continue;
                 }
-    try {
-        const response = await youtube.channels.list({
-                        part: 'snippet,statistics,contentDetails',
-                        id: id, // YouTube Channel ID
-                        key: currentApiKey
-                    });
-                    if (response.data.items && response.data.items.length > 0) {
-                        liveApiData = response.data.items[0]; // Keep the raw API data
-                        // Upsert using the raw liveApiData. The upsert function handles mapping.
-                        await this.upsertSupabaseChannelRecord(liveApiData);
-                        channelResult.source = 'YouTube API';
-                    } else {
-                        channelResult.error = 'Not found via API';
-                        channelResult.source = supabaseChannel ? 'Supabase (API miss)' : 'Not Found';
-                    }
+            } else {
+                // No valid @handle, go directly to YouTube API (alternative source)
+                console.log(`[AggData] No valid handle for ${currentId}. Going directly to alternative source.`);
+                try {
+                    const ytData = await this.fetchChannelDataFromYouTubeAPI(currentId, viewStatsRange, forceRefresh);
+                    return {
+                        ...ytData,
+                        id: currentId,
+                        error: null, 
+                        errorType: null, 
+                        source: 'alternative_source_initial', // Generic
+                    };
+                } catch (youtubeApiError) {
+                    console.error(`[AggData] Direct call to alternative source FAILED for ${currentId}:`, youtubeApiError.message);
+                    return {
+                        id: currentId,
+                        name: 'Error Fetching Name',
+                        error: `Data retrieval failed: ${youtubeApiError.message}`, // Generic
+                        errorType: 'alternative_source_api_error', // Generic
+                        source: 'alternative_source_initial', // Generic
+                        timeFrameUsed: viewStatsRange,
+                    };
+                }
+            }
+        }));
+
+        // Enrich with latest name and thumbnail from Supabase (or fresh API if needed)
+        // This step ensures that even if ViewStats provides some data, we get canonical names/thumbnails.
+        const enrichedResults = await this.enrichApiChannelDataWithFullDetails(results, forceRefresh);
+        return enrichedResults;
+    }
+
+    // Helper function to get foundational data from YouTube API, used as fallback or for initial population.
+    async fetchChannelDataFromYouTubeAPI(channelId, timeFrame, forceRefresh = false) {
+        const manager = await apiKeyManagerPromise;
+        let apiKey = await manager.getKey();
+        if (!apiKey) {
+            const errMsg = `No API key available for YouTube API fallback for channel ${channelId}`;
+            console.error(`[YoutubeService.fetchChannelDataFromYouTubeAPI] ${errMsg}`);
+            throw new Error(errMsg);
+        }
+
+        let channelDetails;
+        try {
+            channelDetails = await this.getChannelDetailsById(channelId, apiKey);
+            if (!channelDetails) {
+                throw new Error(`Channel ${channelId} not found via YouTube API.`);
+            }
+            // Upsert the fetched channel details to Supabase to keep cache fresh
+            await this.upsertSupabaseChannelRecord(channelDetails);
+        } catch (error) {
+            console.error(`[YoutubeService.fetchChannelDataFromYouTubeAPI] Error getting channel details for ${channelId}: ${error.message}`);
+            await this._handleYoutubeApiError(error, apiKey, `fetchChannelDataFromYouTubeAPI (getChannelDetailsById for ${channelId})`);
+            throw error; // Re-throw critical error
+        }
+
+        let viewsGainedInPeriod = 0;
+        // let videosPublishedInPeriod = 0; // REMOVED
+        // let avgViewsPerVideoInPeriod = 0; // REMOVED
+
+        if (timeFrame === "max") {
+            viewsGainedInPeriod = parseInt(channelDetails.statistics?.viewCount, 10) || 0;
+            // videosPublishedInPeriod = parseInt(channelDetails.statistics?.videoCount, 10) || 0; // REMOVED
+            // if (videosPublishedInPeriod > 0) { // REMOVED
+            //     avgViewsPerVideoInPeriod = viewsGainedInPeriod / videosPublishedInPeriod; // REMOVED
+            // } // REMOVED
+        } else {
+            const publishedAfterDate = getDateFromRange(timeFrame);
+            let videosInPeriod = [];
+            if (publishedAfterDate) {
+                try {
+                    // This call to getRecentVideosForChannel is to SUM view counts of videos PUBLISHED in period
+                    // It does not directly provide subs gained in period.
+                    videosInPeriod = await this.getRecentVideosForChannel(channelId, publishedAfterDate, 50, true); 
                 } catch (error) {
-                    console.error(`[YoutubeService] Error fetching channel ${id} from YouTube API:`, error.message);
-                    await this._handleYoutubeApiError(error, currentApiKey, `channels.list for ${id}`);
-                    channelResult.error = 'API error';
-                    channelResult.source = supabaseChannel ? 'Supabase (API error)' : 'API Error';
+                    console.warn(`[YT_API_Fallback] Error fetching videos for ${channelId} in range ${timeFrame}: ${error.message}`);
+                    // Continue, viewsGainedInPeriod will be 0 if this fails
+                }
+            }
+            videosInPeriod.forEach(video => {
+                viewsGainedInPeriod += parseInt(video.statistics?.viewCount, 10) || 0;
+            });
+            // videosPublishedInPeriod = videosInPeriod.length; // REMOVED
+            // if (videosPublishedInPeriod > 0) { // REMOVED
+            //     avgViewsPerVideoInPeriod = viewsGainedInPeriod / videosPublishedInPeriod; // REMOVED
+            // } // REMOVED
+        }
+
+        return {
+            id: channelId,
+            name: channelDetails.snippet?.title,
+            thumbnailUrl: channelDetails.snippet?.thumbnails?.default?.url,
+            channelHandle: channelDetails.snippet?.customUrl?.startsWith('@') ? channelDetails.snippet.customUrl : null,
+            currentSubscriberCount: parseInt(channelDetails.statistics?.subscriberCount, 10) || 0,
+            currentTotalViews: parseInt(channelDetails.statistics?.viewCount, 10) || 0,
+            uploadsPlaylistId: channelDetails.contentDetails?.relatedPlaylists?.uploads,
+            
+            viewsGainedInPeriod: viewsGainedInPeriod,
+            subsGainedInPeriod: 0, 
+            // videosPublishedInPeriod: videosPublishedInPeriod, // REMOVED
+            // avgViewsPerVideoInPeriod: avgViewsPerVideoInPeriod, // REMOVED
+
+            dailyChartData: [], 
+            source: 'alternative_source_data_generic', // Generic source indicator
+            timeFrameUsed: timeFrame,
+            error: null,
+            errorType: null,
+        };
+    }
+
+    // Helper function to enrich API channel data with full details from DB or fresh API call
+    async enrichApiChannelDataWithFullDetails(channelDataItems, forceRefresh = false) {
+        if (!channelDataItems || channelDataItems.length === 0) return [];
+
+        const manager = await apiKeyManagerPromise;
+
+        const enrichedItems = await Promise.all(channelDataItems.map(async (item) => {
+            const channelId = item.id; // This is the YouTube Channel ID
+            let dbChannelData = null;
+            let needsApiRefresh = forceRefresh;
+
+            if (!isSupabaseReady()) {
+                console.warn(`[Enrich] Supabase not ready for channel ${channelId}, forcing API refresh.`);
+                needsApiRefresh = true;
+            } else {
+                try {
+                    const { data, error } = await supabase
+                        .from(CHANNELS_TABLE)
+                        .select(`${CH_COL_TITLE}, ${CH_COL_THUMBNAIL_URL}, ${CH_COL_HANDLE}, ${CH_COL_SUBSCRIBER_COUNT}, ${CH_COL_VIEW_COUNT}, ${CH_COL_VIDEO_COUNT}, ${CH_COL_UPLOADS_PLAYLIST_ID}, ${CH_COL_LAST_FETCHED_AT}`)
+                        .eq(CH_COL_CHANNEL_ID, channelId)
+                        .single();
+                    
+                    if (error && error.code !== 'PGRST116') { // PGRST116 means 0 rows found
+                        console.warn(`[Enrich] Supabase error fetching channel ${channelId}: ${error.message}. Triggering API refresh.`);
+                        needsApiRefresh = true;
+                    } else if (data) {
+                        dbChannelData = data;
+                        const lastFetchedDate = data[CH_COL_LAST_FETCHED_AT] ? new Date(data[CH_COL_LAST_FETCHED_AT]) : null;
+                        if (!lastFetchedDate || (new Date() - lastFetchedDate) / (1000 * 60 * 60 * 24) > CHANNEL_DATA_STALE_DAYS) {
+                            console.log(`[Enrich] DB data for ${channelId} is stale. Triggering API refresh.`);
+                            needsApiRefresh = true;
+                        }
+                    } else { // No data in DB
+                        console.log(`[Enrich] No DB data for ${channelId}. Triggering API refresh.`);
+                        needsApiRefresh = true;
+                    }
+                } catch (dbError) {
+                    console.warn(`[Enrich] Supabase catch error for channel ${channelId}: ${dbError.message}. Triggering API refresh.`);
+                    needsApiRefresh = true;
                 }
             }
 
-            // Determine the definitive source of channel data for current stats
-            const dataSourceForStats = liveApiData || (pfpIsFresh && supabaseChannel ? supabaseChannel : null);
+            // Initialize with item's values (from ViewStats or initial YT API call), then potentially override with DB or fresh API
+            let finalDetails = {
+                name: item.name,
+                thumbnailUrl: item.thumbnailUrl,
+                channelHandle: item.channelHandle, // ViewStats provides this, YT_API fallback also tries.
+                currentSubscriberCount: item.currentSubscriberCount, // ViewStats provides this
+                currentTotalViews: item.currentTotalViews,       // ViewStats provides this
+                currentTotalVideos: item.currentTotalVideos,     // YT_API fallback calculates this
+                uploadsPlaylistId: item.uploadsPlaylistId        // YT_API fallback provides this
+            };
+            
+            // If DB data exists and not forcing API refresh yet, use DB as a base for potentially missing fields
+            if (dbChannelData && !needsApiRefresh) {
+                finalDetails.name = finalDetails.name ?? dbChannelData[CH_COL_TITLE];
+                finalDetails.thumbnailUrl = finalDetails.thumbnailUrl ?? dbChannelData[CH_COL_THUMBNAIL_URL];
+                finalDetails.channelHandle = finalDetails.channelHandle ?? dbChannelData[CH_COL_HANDLE];
+                finalDetails.currentSubscriberCount = finalDetails.currentSubscriberCount ?? dbChannelData[CH_COL_SUBSCRIBER_COUNT];
+                finalDetails.currentTotalViews = finalDetails.currentTotalViews ?? dbChannelData[CH_COL_VIEW_COUNT];
+                finalDetails.currentTotalVideos = finalDetails.currentTotalVideos ?? dbChannelData[CH_COL_VIDEO_COUNT];
+                finalDetails.uploadsPlaylistId = finalDetails.uploadsPlaylistId ?? dbChannelData[CH_COL_UPLOADS_PLAYLIST_ID];
+            }
 
-            if (!dataSourceForStats && supabaseChannel) { // Fallback to potentially stale Supabase data if API failed or wasn't called
-                channelResult.name = supabaseChannel[CH_COL_TITLE] || 'N/A';
-                channelResult.thumbnailUrl = supabaseChannel[CH_COL_THUMBNAIL_URL];
-                channelResult.currentSubscriberCount = parseInt(supabaseChannel[CH_COL_SUBSCRIBER_COUNT], 10) || 0;
-                channelResult.uploadsPlaylistId = supabaseChannel[CH_COL_UPLOADS_PLAYLIST_ID];
-                if(!channelResult.source || channelResult.source === 'Error') channelResult.source = 'Supabase (Stale/API Failed)';
-            } else if (dataSourceForStats) {
-                channelResult.name = dataSourceForStats.snippet?.title || dataSourceForStats[CH_COL_TITLE] || 'N/A';
-                channelResult.thumbnailUrl = dataSourceForStats.snippet?.thumbnails?.default?.url || dataSourceForStats[CH_COL_THUMBNAIL_URL];
-                channelResult.currentSubscriberCount = parseInt(dataSourceForStats.statistics?.subscriberCount || supabaseChannel?.[CH_COL_SUBSCRIBER_COUNT], 10) || 0;
-                channelResult.uploadsPlaylistId = dataSourceForStats.contentDetails?.relatedPlaylists?.uploads || dataSourceForStats[CH_COL_UPLOADS_PLAYLIST_ID];
-                if (liveApiData) channelResult.source = 'YouTube API';
-                else if (pfpIsFresh && supabaseChannel) channelResult.source = 'Supabase (Fresh PFP)';
+
+            if (needsApiRefresh) {
+                let apiKey = await manager.getKey();
+                if (apiKey) {
+                    try {
+                        console.log(`[Enrich] Performing API refresh for channel ${channelId}.`);
+                        const apiChannelDetails = await this.getChannelDetailsById(channelId, apiKey);
+                        if (apiChannelDetails) {
+                            await this.upsertSupabaseChannelRecord(apiChannelDetails); // Save to DB
+                            
+                            // API data is authoritative when refreshing
+                            finalDetails.name = apiChannelDetails.snippet?.title;
+                            finalDetails.thumbnailUrl = apiChannelDetails.snippet?.thumbnails?.default?.url;
+                            finalDetails.channelHandle = (apiChannelDetails.snippet?.customUrl?.startsWith('@') ? apiChannelDetails.snippet.customUrl : finalDetails.channelHandle) || null; // Prefer API handle if valid, else keep existing
+                            finalDetails.currentSubscriberCount = parseInt(apiChannelDetails.statistics?.subscriberCount, 10) || 0;
+                            finalDetails.currentTotalViews = parseInt(apiChannelDetails.statistics?.viewCount, 10) || 0;
+                            finalDetails.currentTotalVideos = parseInt(apiChannelDetails.statistics?.videoCount, 10) || 0;
+                            finalDetails.uploadsPlaylistId = apiChannelDetails.contentDetails?.relatedPlaylists?.uploads;
+                        }
+                    } catch (apiError) {
+                        console.warn(`[Enrich] API error refreshing channel ${channelId}: ${apiError.message}`);
+                        await this._handleYoutubeApiError(apiError, apiKey, `enrich (getChannelDetailsById for ${channelId})`);
+                        // If API refresh fails, we stick with what we had (item data or DB data if loaded before api attempt)
+                        // Ensure essential fields have some value if possible, from DB if not from item.
+                        if (dbChannelData) {
+                             finalDetails.name = finalDetails.name ?? dbChannelData[CH_COL_TITLE];
+                             finalDetails.thumbnailUrl = finalDetails.thumbnailUrl ?? dbChannelData[CH_COL_THUMBNAIL_URL];
+                             finalDetails.channelHandle = finalDetails.channelHandle ?? dbChannelData[CH_COL_HANDLE];
+                        }
+                    }
+                } else {
+                    console.warn(`[Enrich] No API key available for refreshing channel ${channelId}. Using potentially stale or item data.`);
+                     if (dbChannelData) { // Fallback to DB if API key fails
+                         finalDetails.name = finalDetails.name ?? dbChannelData[CH_COL_TITLE];
+                         finalDetails.thumbnailUrl = finalDetails.thumbnailUrl ?? dbChannelData[CH_COL_THUMBNAIL_URL];
+                         finalDetails.channelHandle = finalDetails.channelHandle ?? dbChannelData[CH_COL_HANDLE];
+                         finalDetails.currentSubscriberCount = finalDetails.currentSubscriberCount ?? dbChannelData[CH_COL_SUBSCRIBER_COUNT];
+                         finalDetails.currentTotalViews = finalDetails.currentTotalViews ?? dbChannelData[CH_COL_VIEW_COUNT];
+                         finalDetails.currentTotalVideos = finalDetails.currentTotalVideos ?? dbChannelData[CH_COL_VIDEO_COUNT];
+                         finalDetails.uploadsPlaylistId = finalDetails.uploadsPlaylistId ?? dbChannelData[CH_COL_UPLOADS_PLAYLIST_ID];
+                    }
+                }
             }
             
-            // Ensure uploadsPlaylistId is picked up if missed
-            if (!channelResult.uploadsPlaylistId && supabaseChannel?.[CH_COL_UPLOADS_PLAYLIST_ID]) {
-                channelResult.uploadsPlaylistId = supabaseChannel[CH_COL_UPLOADS_PLAYLIST_ID];
-            }
-
-            let totalViewsForTimeFrame = 0, videosPublishedInTimeFrame = 0, avgViewsInTimeFrame = 0;
-            let totalLikesInTimeFrame = 0, totalCommentsInTimeFrame = 0;
-
-            if (timeFrame === "all_time" && dataSourceForStats) { // Condition reverted to include dataSourceForStats
-                // For "all_time", use the channel's main statistics for views and video count
-                totalViewsForTimeFrame = parseInt(dataSourceForStats.statistics?.viewCount || supabaseChannel?.[CH_COL_VIEW_COUNT], 10) || 0;
-                videosPublishedInTimeFrame = parseInt(dataSourceForStats.statistics?.videoCount || supabaseChannel?.[CH_COL_VIDEO_COUNT], 10) || 0;
-                avgViewsInTimeFrame = videosPublishedInTimeFrame > 0 ? totalViewsForTimeFrame / videosPublishedInTimeFrame : 0;
-                channelResult.source += ' (Lifetime Stats)'; // Reverted source message
-            } else if (channelResult.uploadsPlaylistId && publishedAfterDate) {
-                const manager = await apiKeyManagerPromise;
-                currentApiKey = await manager.getKey();
-                if (!currentApiKey) {
-                    console.warn(`[YoutubeService] No API key for video stats for channel ${id}. Using Supabase fallback if available.`);
-                    channelResult.error = (channelResult.error ? channelResult.error + '; ' : '') + 'API keys exhausted for video stats';
-                    const supabaseVideos = await this.getVideosForChannelsFromSupabase([id], publishedAfterDate);
-                    totalViewsForTimeFrame = supabaseVideos.reduce((sum, v) => sum + (v[VID_COL_LATEST_VIEW_COUNT] || 0), 0);
-                    videosPublishedInTimeFrame = supabaseVideos.length;
-                    avgViewsInTimeFrame = videosPublishedInTimeFrame > 0 ? totalViewsForTimeFrame / videosPublishedInTimeFrame : 0;
-                    channelResult.source += ' (Video Stats Supabase Fallback)';
-                } else {
-                    try {
-                        console.log(`[YoutubeService] Attempting playlistItems.list for channel ${id} using uploadsPlaylistId: ${channelResult.uploadsPlaylistId}`);
-                        const videoIdsFromPlaylist = [];
-                        let nextPageToken = null, attempts = 0;
-                        do {
-                            attempts++;
-                            const playlistItems = await youtube.playlistItems.list({
-                                part: 'snippet,contentDetails',
-                                playlistId: channelResult.uploadsPlaylistId,
-                                maxResults: 50,
-                                pageToken: nextPageToken,
-                                key: currentApiKey
-                            });
-                            const items = playlistItems.data.items || [];
-                            for (const item of items) {
-                                if (new Date(item.snippet?.publishedAt) >= publishedAfterDate) {
-                                    if (item.contentDetails?.videoId) videoIdsFromPlaylist.push(item.contentDetails.videoId);
-                                } else {
-                                    nextPageToken = null;
-                                    break;
-                                }
-                            }
-                            if (items.length === 50 && nextPageToken !== null) nextPageToken = playlistItems.data.nextPageToken;
-                            else nextPageToken = null;
-                            if (attempts >= 5 && nextPageToken) break; // Limit API calls
-                        } while (nextPageToken);
-
-                        if (videoIdsFromPlaylist.length > 0) {
-                            const videoApiResponsesToUpsert = [];
-                            for (let i = 0; i < videoIdsFromPlaylist.length; i += 50) {
-                                const managerBatch = await apiKeyManagerPromise;
-                                const batchApiKey = await managerBatch.getKey();
-                                if(!batchApiKey) { console.warn("API key exhausted during video batch fetch."); break; }
-                                const batchVideoIds = videoIdsFromPlaylist.slice(i, i + 50);
-                                const videoDetailsResponse = await youtube.videos.list({
-                                    part: 'snippet,statistics,contentDetails',
-                                    id: batchVideoIds.join(','),
-                                    maxResults: batchVideoIds.length,
-                                    key: batchApiKey
-                                });
-                                for (const videoDataFromApi of videoDetailsResponse.data.items || []) {
-                                    if (new Date(videoDataFromApi.snippet?.publishedAt) >= publishedAfterDate) {
-                                        totalViewsForTimeFrame += parseInt(videoDataFromApi.statistics?.viewCount, 10) || 0;
-                                        totalLikesInTimeFrame += parseInt(videoDataFromApi.statistics?.likeCount, 10) || 0;
-                                        totalCommentsInTimeFrame += parseInt(videoDataFromApi.statistics?.commentCount, 10) || 0;
-                                        videosPublishedInTimeFrame++;
-                                        // Add channel_id for upsert mapping
-                                        const videoWithChannelId = { ...videoDataFromApi, channel_id: id };
-                                        videoApiResponsesToUpsert.push(videoWithChannelId);
-                                    }
-                                }
-                            }
-                            if (videoApiResponsesToUpsert.length > 0) await this.upsertSupabaseVideoRecordsBatch(videoApiResponsesToUpsert);
-                        }
-                        avgViewsInTimeFrame = videosPublishedInTimeFrame > 0 ? totalViewsForTimeFrame / videosPublishedInTimeFrame : 0;
-                        channelResult.source += ` (Video Stats API - ${timeFrame})`;
-                    } catch (videoError) {
-                        let specificErrorMessage = 'Video stats API error';
-                        const apiError = videoError.response?.data?.error;
-                        let reportKeyForThisError = false;
-
-                        if (apiError?.errors?.length > 0) {
-                            const reason = apiError.errors[0]?.reason;
-                            if (reason === 'playlistNotFound') {
-                                specificErrorMessage = 'Uploads playlist not found or inaccessible.';
-                                console.warn(`[YoutubeService] ${specificErrorMessage} for channel ${id} (uploadsPlaylistId: ${channelResult.uploadsPlaylistId}). Error: ${videoError.message}`);
-                            } else if (reason === 'keyInvalid' || reason?.includes('disabled') || reason === 'accessNotConfigured' || reason === 'quotaExceeded' || reason === 'dailyLimitExceeded') {
-                                reportKeyForThisError = true;
-                                specificErrorMessage = `Video stats API error (${reason})`;
-                                console.warn(`[YoutubeService] Key-related error (${reason}) for channel ${id} during video stats fetch.`);
-                            } else {
-                                specificErrorMessage = `Video stats API error (${reason || 'unknown reason'})`;
-                                console.warn(`[YoutubeService] API error for channel ${id} during video stats fetch: ${videoError.message}`);
-                            }
-                        } else if (videoError.response?.status === 403 || videoError.response?.status === 429) {
-                             reportKeyForThisError = true;
-                             specificErrorMessage = `Video stats API error (status ${videoError.response.status})`;
-                             console.warn(`[YoutubeService] Key-related error (status ${videoError.response.status}) for channel ${id} during video stats fetch.`);
-                        } else {
-                            console.error(`[YoutubeService] Error fetching video stats for channel ${id} from API:`, videoError.message);
-                        }
-
-                        if (reportKeyForThisError && currentApiKey) { // Use the key that was active for this block
-                            const manager = await apiKeyManagerPromise;
-                            await manager.reportKeyFailure(currentApiKey);
-                            specificErrorMessage += ', API key reported.';
-                            console.info(`[YoutubeService] Reported failure for API key used for channel ${id} video stats.`);
-                        }
-
-                        channelResult.error = (channelResult.error ? channelResult.error + '; ' : '') + specificErrorMessage;
-                        
-                        const supabaseVideos = await this.getVideosForChannelsFromSupabase([id], publishedAfterDate);
-                        totalViewsForTimeFrame = supabaseVideos.reduce((sum, v) => sum + (v[VID_COL_LATEST_VIEW_COUNT] || 0), 0);
-                        videosPublishedInTimeFrame = supabaseVideos.length;
-                        avgViewsInTimeFrame = videosPublishedInTimeFrame > 0 ? totalViewsForTimeFrame / videosPublishedInTimeFrame : 0;
-                        channelResult.source += ' (Video Stats Supabase Fallback on API Error)';
-                    }
-                }
-            } else if (!channelResult.uploadsPlaylistId && publishedAfterDate) { // No playlist ID, try direct Supabase lookup for recent videos
-                const supabaseVideos = await this.getVideosForChannelsFromSupabase([id], publishedAfterDate);
-                totalViewsForTimeFrame = supabaseVideos.reduce((sum, v) => sum + (v[VID_COL_LATEST_VIEW_COUNT] || 0), 0);
-                videosPublishedInTimeFrame = supabaseVideos.length;
-                avgViewsInTimeFrame = videosPublishedInTimeFrame > 0 ? totalViewsForTimeFrame / videosPublishedInTimeFrame : 0;
-                channelResult.source += ' (Video Stats Supabase - No Playlist ID)';
-            }
-
-            channelResult.totalViewsInTimeFrame = totalViewsForTimeFrame;
-            channelResult.avgViewsInTimeFrame = Math.round(avgViewsInTimeFrame);
-            channelResult.videosPublishedInTimeFrame = videosPublishedInTimeFrame;
-            channelResult.totalLikesInTimeFrame = totalLikesInTimeFrame;
-            channelResult.totalCommentsInTimeFrame = totalCommentsInTimeFrame;
-            channelResult.timeFrameUsed = timeFrame;
-            results.push(channelResult);
-        }
-        
-        channelDataCache.set(cacheKey, { timestamp: Date.now(), data: results });
-        console.log(`[YoutubeService] End of getAggregatedChannelData. Processed ${results.length} channels.`);
-        return results;
+            return {
+                ...item, // Original item data (importantly, period-specific data from ViewStats/YT fallback)
+                ...finalDetails, // Overwrites/fills general channel info
+                id: channelId, // Ensure id is always present and correct
+            };
+        }));
+        return enrichedItems;
     }
 
     /**
@@ -844,16 +1063,16 @@ class YoutubeService {
         }
     }
 
-    async getChannelDetailsById(channelId, apiKey) {
+    async getChannelDetailsById(channelId, apiKeyProvided = null) {
         if (!channelId || typeof channelId !== 'string' || channelId.trim() === '') {
             throw new Error('Channel ID must be a non-empty string.');
         }
-        if (!apiKey) throw new Error('API key required for getChannelDetailsById');
+        if (!apiKeyProvided) throw new Error('API key required for getChannelDetailsById');
         try {
             const channelDetailsResponse = await youtube.channels.list({
                 part: 'snippet,statistics,contentDetails', // contentDetails for uploadsPlaylistId
                 id: channelId,
-                key: apiKey
+                key: apiKeyProvided
             });
             if (channelDetailsResponse.data.items && channelDetailsResponse.data.items.length > 0) {
                 return channelDetailsResponse.data.items[0]; // Return the full channel item

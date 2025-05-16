@@ -298,9 +298,6 @@ const Onboarding = () => {
           {currentStep === 0 && (
             <Card className="animate-fade-in bg-neutral-800/50 border-neutral-700/50 backdrop-blur-sm shadow-lg">
               <CardContent className="pt-6 flex flex-col items-center text-center px-4 py-12">
-                <div className="w-24 h-24 mb-6 yellow-glow">
-                  <img src="/lovable-uploads/c7a870cf-9a80-4a17-959e-ccd42ccda497.png" alt="trendy Logo" className="w-full h-full object-contain" />
-                </div>
                 <h2 className="text-2xl font-semibold mb-4 text-white">Discover Trending YouTube Shorts First</h2>
                 <p className="text-neutral-400 mb-8 max-w-md">
                   trendy monitors YouTube Shorts in real-time to alert you about 
