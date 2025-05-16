@@ -123,24 +123,36 @@ async function decryptViewStatsResponse(response) {
 // Helper function to convert range string (e.g., "7d", "28d") to a Date object
 function getDateFromRange(rangeString) {
     const now = new Date();
-    if (rangeString === "max" || !rangeString) return null; // No date filter for "all time" videos
+    // DETAILED LOGGING ADDED HERE
+    console.log(`[getDateFromRange] Input rangeString: '${rangeString}', Current 'now': ${now.toISOString()}`);
 
-    const numMatch = rangeString.match(/^(\d+)/);
+    if (rangeString === "max" || !rangeString) {
+        console.log("[getDateFromRange] rangeString is 'max' or empty, returning null.");
+        return null; // No date filter for "all time" videos
+    }
+
+    // Ensure rangeString is treated as a string for match()
+    const strRangeString = String(rangeString);
+    const numMatch = strRangeString.match(/^(\d+)/);
+
     if (!numMatch) {
-        console.warn(`[getDateFromRange] Invalid rangeString format: ${rangeString}, defaulting to 28 days.`);
+        console.warn(`[getDateFromRange] Invalid rangeString format: '${strRangeString}', defaulting to 28 days. 'now' before default: ${now.toISOString()}`);
         now.setDate(now.getDate() - 28);
+        console.log(`[getDateFromRange] Defaulted. 'now' after default: ${now.toISOString()}`);
         return now;
     }
     const num = parseInt(numMatch[1]);
-    const unit = rangeString.slice(numMatch[1].length); // e.g., "d" from "28d"
+    const unit = strRangeString.slice(numMatch[1].length); // e.g., "d" from "28d"
 
     if (isNaN(num) || unit !== 'd') {
-        console.warn(`[getDateFromRange] Invalid rangeString unit or number: ${rangeString}, defaulting to 28 days.`);
+        console.warn(`[getDateFromRange] Invalid rangeString unit ('${unit}') or number ('${num}') for input '${strRangeString}', defaulting to 28 days. 'now' before default: ${now.toISOString()}`);
         now.setDate(now.getDate() - 28);
+        console.log(`[getDateFromRange] Defaulted. 'now' after default: ${now.toISOString()}`);
         return now;
     }
 
     now.setDate(now.getDate() - num);
+    console.log(`[getDateFromRange] Calculated past date: ${now.toISOString()} (subtracted ${num} days)`);
     return now;
 }
 
@@ -515,7 +527,6 @@ class YoutubeService {
                     console.error(`[AggData] Direct call to alternative source FAILED for ${currentId}:`, youtubeApiError.message);
                     return {
                         id: currentId,
-                        name: 'Error Fetching Name',
                         error: `Data retrieval failed: ${youtubeApiError.message}`, // Generic
                         errorType: 'alternative_source_api_error', // Generic
                         source: 'alternative_source_initial', // Generic
@@ -545,14 +556,21 @@ class YoutubeService {
         try {
             channelDetails = await this.getChannelDetailsById(channelId, apiKey);
             if (!channelDetails) {
-                throw new Error(`Channel ${channelId} not found via YouTube API.`);
+                // Specific error for channel not found by API
+                const notFoundError = new Error(`Channel ${channelId} not found via YouTube API.`);
+                notFoundError.isChannelNotFound = true; // Custom property
+                throw notFoundError;
             }
-            // Upsert the fetched channel details to Supabase to keep cache fresh
             await this.upsertSupabaseChannelRecord(channelDetails);
         } catch (error) {
             console.error(`[YoutubeService.fetchChannelDataFromYouTubeAPI] Error getting channel details for ${channelId}: ${error.message}`);
+            // If it's our custom "not found" error, re-throw it directly so getAggregated can see `isChannelNotFound`
+            if (error.isChannelNotFound) {
+                throw error;
+            }
+            // For other errors, handle API key and re-throw
             await this._handleYoutubeApiError(error, apiKey, `fetchChannelDataFromYouTubeAPI (getChannelDetailsById for ${channelId})`);
-            throw error; // Re-throw critical error
+            throw error; 
         }
 
         let viewsGainedInPeriod = 0;
@@ -591,7 +609,7 @@ class YoutubeService {
             id: channelId,
             name: channelDetails.snippet?.title,
             thumbnailUrl: channelDetails.snippet?.thumbnails?.default?.url,
-            channelHandle: channelDetails.snippet?.customUrl?.startsWith('@') ? channelDetails.snippet.customUrl : null,
+            channelHandle: channelDetails.snippet?.customUrl?.startsWith('@') ? channelDetails.snippet.customUrl : (await this._getHandleFromDb(channelId) || null), // Ensure handle is attempted from DB too
             currentSubscriberCount: parseInt(channelDetails.statistics?.subscriberCount, 10) || 0,
             currentTotalViews: parseInt(channelDetails.statistics?.viewCount, 10) || 0,
             uploadsPlaylistId: channelDetails.contentDetails?.relatedPlaylists?.uploads,
