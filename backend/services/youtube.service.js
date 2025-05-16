@@ -101,6 +101,13 @@ async function decryptViewStatsResponse(response) {
 
   const encryptedBuffer = await response.arrayBuffer();
 
+  // --- ADDED LOGGING for encryptedBuffer ---
+  console.log(`[VS_DECRYPT] Encrypted buffer length: ${encryptedBuffer.byteLength}`);
+  const firstBytes = new Uint8Array(encryptedBuffer.slice(0, 16));
+  const firstBytesHex = Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  console.log(`[VS_DECRYPT] Encrypted buffer first 16 bytes (hex): ${firstBytesHex}`);
+  // --- END ADDED LOGGING ---
+
   // Use webcrypto from node:crypto
   const cryptoKey = await webcrypto.subtle.importKey(
     "raw",
