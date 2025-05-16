@@ -373,48 +373,51 @@ class YoutubeService {
 
     // Modified to accept ONLY a valid, confirmed @handle for the ViewStats attempt.
     async fetchViewStatsChannelData(actualValidHandle, actualChannelId, range) {
-        // actualValidHandle is now expected to be a confirmed @handle.
-        const vsRange = convertToViewStatsRange(range);
-        const viewStatsUrl = `https://api.viewstats.com/channels/${encodeURIComponent(actualValidHandle)}/stats?range=${vsRange}&groupBy=daily&sortOrder=ASC&withRevenue=true&withEvents=true&withBreakdown=false&withToday=false`;
+        const vsRange = convertToViewStatsRange(range); // Keep this to get the numeric/alltime range
+
+        // NEW: Construct URL for your proxy
+        const proxyBaseUrl = process.env.VIEWSTATS_PROXY_URL;
+        if (!proxyBaseUrl) {
+            console.error("[VS_SVC_PROXY] VIEWSTATS_PROXY_URL environment variable is not set.");
+            const error = new Error("Proxy URL not configured for primary analytics provider.");
+            error.statusCode = 500;
+            error.viewStatsError = true; // Keep this for consistent error handling flow
+            error.channelIdForFallback = actualChannelId;
+            throw error;
+        }
+
+        // Pass actualValidHandle (e.g., "@handle") and vsRange (e.g., "28", "alltime") to your proxy
+        const proxyUrl = `${proxyBaseUrl}?handle=${encodeURIComponent(actualValidHandle)}&range=${vsRange}`;
         
-        console.log(`[VS_SVC] Attempting ViewStats (axios, identity) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
+        console.log(`[VS_SVC] Attempting ViewStats via Proxy (axios) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. Proxy URL: ${proxyUrl}`);
 
         try {
-            const response = await axios.get(viewStatsUrl, {
-                headers: {
-                    'Authorization': `Bearer ${VIEWSTATS_BEARER_TOKEN}`,
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept-Encoding': 'identity' // Request uncompressed content
-                },
-                responseType: 'arraybuffer' // Crucial for getting the response as an ArrayBuffer
+            const response = await axios.get(proxyUrl, {
+                // Headers for your proxy (if any needed). 
+                // ViewStats auth & Accept-Encoding are handled BY THE PROXY when it calls ViewStats.
+                responseType: 'arraybuffer' // Expecting raw binary data from our proxy
             });
 
-            if (response.status !== 200) { // AXIOS CHECK
-                let errorBody = 'Unknown error';
+            if (response.status !== 200) {
+                let errorBody = 'Unknown error from proxy';
                 try {
-                    // For axios, response.data will be the ArrayBuffer on success, or potentially an error object/string on failure if not 200
-                    // We'll try to decode it as text if it's not what we expect for an error body.
                     if (response.data && typeof response.data !== 'string' && !(response.data instanceof ArrayBuffer)) {
                         errorBody = JSON.stringify(response.data);
                     } else if (typeof response.data === 'string'){
                         errorBody = response.data;
                     } else {
-                        // If it's an ArrayBuffer even on error, try to decode as text, might be an error message
                         errorBody = Buffer.from(response.data).toString('utf-8'); 
                     }
                 } catch (e) { /* ignore */ }
-                // Obfuscated log
-                console.warn(`[VS_SVC] (axios) API request failed for ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")} with status ${response.status}: ${errorBody.substring(0, 100)}`);
-                const error = new Error(`ViewStats API request failed: ${response.status} - ${errorBody.substring(0,100)}`);
+                console.warn(`[VS_SVC_PROXY] Proxy request failed for ${proxyUrl} with status ${response.status}: ${errorBody.substring(0, 100)}`);
+                const error = new Error(`Primary analytics provider (via proxy) request failed: ${response.status} - ${errorBody.substring(0,100)}`);
                 error.statusCode = response.status; 
                 error.viewStatsError = true;
                 error.channelIdForFallback = actualChannelId;
                 throw error; 
             }
 
-            // For axios with arraybuffer, response.data is the ArrayBuffer
             const encryptedBuffer = response.data; 
-
             // Logging for encryptedBuffer is now only in decryptViewStatsResponse
 
             const decryptedData = await decryptViewStatsResponse({ arrayBuffer: async () => encryptedBuffer });
