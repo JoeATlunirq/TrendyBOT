@@ -18,15 +18,16 @@ const PREDEFINED_ICONS = ['🎉', '💡', '🚀', '🎯', '📈', '📊', '💰'
 interface ChannelGroup {
   id: string; 
   name: string;
-  channelIdsString: string; // Raw input from textarea
+  channelIdsString: string; // Raw input from textarea, will be updated to handles/IDs after save
   icon?: string; 
   notificationsEnabled?: boolean;
-  resolvedChannels?: Array<{ // NEW: To store resolved ID, name, and PFP URL
-    id: string;
+  resolvedChannels?: Array<{ 
+    id: string; // YouTube Channel ID (UC...)
     name?: string;
     pfpUrl?: string;
+    handle?: string; // YouTube Channel Handle (@handle)
   }>;
-  thresholds?: StoredGroupThresholds; // NEW for per-group thresholds
+  thresholds?: StoredGroupThresholds;
 }
 
 // --- NEW: PFP State Interface ---
@@ -60,11 +61,12 @@ interface StoredChannelGroups {
     icon?: string; 
     notificationsEnabled?: boolean;
     resolvedChannels?: Array<{
-        id: string;
+        id: string; // YouTube Channel ID (UC...)
         name?: string;
         pfpUrl?: string;
+        handle?: string; // YouTube Channel Handle (@handle)
     }>;
-    thresholds?: StoredGroupThresholds; // NEW for per-group thresholds
+    thresholds?: StoredGroupThresholds;
   }>;
 }
 
@@ -137,13 +139,19 @@ const AlertPreferences = () => {
                     setChannelGroups(parsedData.groups.map(g => ({
                         id: g.id,
                         name: g.name,
+                        // On load, reconstruct channelIdsString from handles if present, else IDs
                         channelIdsString: Array.isArray(g.resolvedChannels) && g.resolvedChannels.length > 0 
-                                            ? g.resolvedChannels.map(rc => rc.id).join(', ') 
+                                            ? g.resolvedChannels.map(rc => rc.handle || rc.id).join(', ') 
                                             : '',
                         icon: g.icon || '',
                         notificationsEnabled: g.notificationsEnabled === undefined ? true : g.notificationsEnabled, 
-                        resolvedChannels: g.resolvedChannels || [],
-                        thresholds: g.thresholds || { // NEW: Initialize thresholds
+                        resolvedChannels: g.resolvedChannels?.map(rc => ({ // Ensure all fields are present
+                            id: rc.id,
+                            name: rc.name,
+                            pfpUrl: rc.pfpUrl,
+                            handle: rc.handle
+                        })) || [],
+                        thresholds: g.thresholds || { 
                             thresholdViews: null,
                             thresholdViewsTimeWindowHours: null,
                             thresholdLikes: null,
@@ -244,64 +252,71 @@ const AlertPreferences = () => {
     useEffect(() => {
         if (!token || channelGroups.length === 0) return;
 
-        const fetchPfpAndNameForChannel = async (channelId: string, groupId: string) => {
+        const fetchPfpAndNameForChannel = async (channelIdOrHandle: string, groupId: string) => {
             const group = channelGroups.find(g => g.id === groupId);
-            const existingChannelData = group?.resolvedChannels?.find(rc => rc.id === channelId);
-            if (existingChannelData && existingChannelData.pfpUrl && existingChannelData.name) return; // Already have PFP URL and name
-
-            // If already errored (e.g. 429), don't retry immediately in this session for this channelId
-            if (channelPfps[channelId]?.error) return; 
-            if (channelPfps[channelId]?.isLoading) return;
+            // Try to find by ID first, then by handle if ID doesn't match an existing resolved channel directly
+            let existingChannelData = group?.resolvedChannels?.find(rc => rc.id === channelIdOrHandle || rc.handle === channelIdOrHandle);
             
-            setChannelPfps(prev => ({ ...prev, [channelId]: { isLoading: true, url: null, error: false } })); // Reset error on new attempt
+            // If all essential data (pfp, name, id, handle) is already present for the specific ID/Handle, skip.
+            // This check is inside the async function, the loop below might still call this function.
+            if (existingChannelData && existingChannelData.pfpUrl && existingChannelData.name && existingChannelData.id && existingChannelData.handle) return; 
+
+            const lookupKey = existingChannelData?.id || channelIdOrHandle; // Prefer ID for lookup if known, else use original input
+
+            if (channelPfps[lookupKey]?.error) return; 
+            if (channelPfps[lookupKey]?.isLoading) return;
+            
+            setChannelPfps(prev => ({ ...prev, [lookupKey]: { isLoading: true, url: null, error: false } }));
 
             try {
                 const response = await axios.post(`${BACKEND_API_BASE_URL}/youtube/lookup`, 
-                    { query: channelId }, 
+                    { query: lookupKey }, // Use the original entry (ID or handle or URL) for lookup
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
-                if (response.data && response.data.id) { // Ensure ID matches, then update
+                // EXPECTING backend to return: id, title (for name), thumbnailUrl (for pfpUrl), AND channelHandle
+                if (response.data && response.data.id && response.data.channelHandle) { 
                     const pfpData = {
                         id: response.data.id,
                         name: response.data.title || response.data.id,
-                        pfpUrl: response.data.thumbnailUrl || null
+                        pfpUrl: response.data.thumbnailUrl || null, // Ensure pfpUrl is explicitly null if not provided or empty
+                        handle: response.data.channelHandle 
                     };
                     setChannelGroups(prevGroups => prevGroups.map(g => {
                         if (g.id === groupId) {
-                            const updatedResolved = g.resolvedChannels ? g.resolvedChannels.filter(rc => rc.id !== channelId) : [];
+                            // Remove old entry if it exists (e.g. if ID was present but handle was missing)
+                            const updatedResolved = g.resolvedChannels ? g.resolvedChannels.filter(rc => rc.id !== pfpData.id) : [];
                             updatedResolved.push(pfpData);
                             return { ...g, resolvedChannels: updatedResolved };
                         }
                         return g;
                     }));
-                    setChannelPfps(prev => ({ ...prev, [channelId]: { isLoading: false, url: pfpData.pfpUrl, channelName: pfpData.name } }));
+                    setChannelPfps(prev => ({ ...prev, [lookupKey]: { isLoading: false, url: pfpData.pfpUrl, channelName: pfpData.name } }));
                 } else {
-                    setChannelPfps(prev => ({ ...prev, [channelId]: { isLoading: false, url: null, error: true } }));
+                    setChannelPfps(prev => ({ ...prev, [lookupKey]: { isLoading: false, url: null, error: true } }));
+                    console.warn(`[AlertPreferences] Lookup for '${lookupKey}' did not return expected id and handle. Response:`, response.data);
                 }
             } catch (error) {
-                console.error(`Failed to fetch PFP/name for ${channelId}:`, error);
-                setChannelPfps(prev => ({ ...prev, [channelId]: { isLoading: false, url: null, error: true } }));
+                console.error(`Failed to fetch PFP/name/handle for ${lookupKey}:`, error);
+                setChannelPfps(prev => ({ ...prev, [lookupKey]: { isLoading: false, url: null, error: true } }));
             }
         };
 
         channelGroups.forEach(group => {
+            // Ensure existing resolvedChannels have all data, or try to fetch it
             group.resolvedChannels?.forEach(rc => {
-                if (rc.id && (!rc.pfpUrl || !rc.name)) { // If ID exists but PFP or name is missing
-                    fetchPfpAndNameForChannel(rc.id, group.id);
-                }
-            });
-            // Also check channelIdsString for any IDs not yet in resolvedChannels (e.g. newly typed)
-            // This part is mostly handled by the save process now, but this ensures UI consistency if user types and doesn't save immediately.
-            group.channelIdsString.split(',').map(id => id.trim()).filter(id => id.startsWith('UC') && id.length > 20).forEach(idInString => {
-                const isInResolved = group.resolvedChannels?.some(rc => rc.id === idInString);
-                if (!isInResolved) {
-                    // This case is tricky: we don't want to spam fetches for merely typed IDs before save.
-                    // The primary PFP/name fetch will now occur during the save/resolution process.
-                    // This effect will now mainly ensure that *loaded* resolvedChannels have their PFP/name if missing.
+                // --- ADDED LOGGING ---
+                console.log(`[PFP_EFFECT_CHECK] Group: ${group.name} (${group.id}), Channel: ${rc.name || rc.id}, Handle: ${rc.handle}, Has pfpUrl: ${!!rc.pfpUrl}, pfpUrl value: ${rc.pfpUrl}`);
+                // --- END ADDED LOGGING ---
+                
+                // MODIFIED CONDITION: Only fetch if pfpUrl is undefined.
+                // This respects cases where pfpUrl might be "" or null (meaning "no PFP" or "PFP not found previously").
+                if (rc.id && rc.pfpUrl === undefined) { 
+                    console.log(`[PFP_EFFECT_FETCHING] Condition met (rc.id && rc.pfpUrl === undefined). Fetching for ${rc.id} in group ${group.id}`);
+                    fetchPfpAndNameForChannel(rc.id, group.id); 
                 }
             });
         });
-    }, [channelGroups, token, BACKEND_API_BASE_URL]); // Removed channelPfps from deps
+    }, [channelGroups, token, BACKEND_API_BASE_URL]); // Removed channelPfps from deps to avoid potential loops if fetchPfpAndNameForChannel itself modified it too directly.
     // --- END ADJUSTED PFP Fetch useEffect ---
 
     // NEW: Per-group threshold handlers
@@ -387,102 +402,157 @@ const AlertPreferences = () => {
         setChannelGroups(prev => prev.filter(group => group.id !== groupId));
     };
 
-    const handleSavePreferencesClick = async () => { // Made async
-        setIsCurrentlySavingAll(true); // <<< SET LOADING STATE
-        try { // <<< ADD TRY BLOCK
+    const handleSavePreferencesClick = async () => {
+        setIsCurrentlySavingAll(true);
+        try { 
             if (!token && channelGroups.some(cg => cg.channelIdsString.trim() !== '')) {
-                toast({
-                    title: "Login Required for Resolution",
-                    description: "Channel IDs/URLs can only be resolved if you are logged in. Please log in or save with existing IDs.",
-                    variant: "destructive"
-                });
-                // Optionally, you could still save if you allow saving unresolved things without login
-                // For now, let's prevent saving with things that *look* like they need resolution if not logged in.
-                // However, if all channelIdStrings are empty or look like UC IDs, saving without login might be fine.
-                const needsResolution = channelGroups.some(group => 
-                    group.channelIdsString.split(',').some(entry => entry.trim() && (!entry.trim().startsWith('UC') || entry.trim().length <= 20))
+                const needsResolutionViaApi = channelGroups.some(group => 
+                    group.channelIdsString.split(',').some(entry => {
+                        const trimmedEntry = entry.trim();
+                        return trimmedEntry && !trimmedEntry.startsWith('@') && (!trimmedEntry.startsWith('UC') || trimmedEntry.length <= 20);
+                    })
                 );
-                if (needsResolution) return; 
+                if (needsResolutionViaApi) {
+                    toast({
+                        title: "Login Required for Full Resolution",
+                        description: "Channel URLs or names require login to resolve to IDs and Handles. Please log in or use @handles/ChannelIDs directly.",
+                        variant: "destructive"
+                    });
+                    setIsCurrentlySavingAll(false);
+                    return;
+                }
             }
 
             let unresolvedEntriesExistGlobal = false;
             let resolutionErrorsOccurredGlobal = false;
             let actualApiLookupsAttempted = false;
 
-            // Create a new array for updated groups to avoid direct state mutation in loop
-            const updatedChannelGroups: ChannelGroup[] = JSON.parse(JSON.stringify(channelGroups)); // Deep copy
+            const updatedChannelGroups: ChannelGroup[] = JSON.parse(JSON.stringify(channelGroups));
 
             for (let i = 0; i < updatedChannelGroups.length; i++) {
                 const group = updatedChannelGroups[i];
-                const currentResolvedMap = new Map(group.resolvedChannels?.map(rc => [rc.id, rc]));
-                const newResolvedChannels: Array<{id: string; name?:string; pfpUrl?: string}> = [];
+                const currentResolvedMapById = new Map(group.resolvedChannels?.map(rc => [rc.id, rc]));
+                const currentResolvedMapByHandle = new Map(group.resolvedChannels?.filter(rc => rc.handle).map(rc => [rc.handle!, rc]));
+                const newResolvedChannels: Array<{id: string; name?:string; pfpUrl?: string; handle?: string}> = [];
 
                 if (!group.channelIdsString.trim()) {
-                    group.resolvedChannels = []; // Clear resolved if string is empty
+                    group.resolvedChannels = [];
                     continue; 
                 }
 
                 const entries = group.channelIdsString.split(',').map(entry => entry.trim()).filter(entry => entry);
 
                 for (const entry of entries) {
-                    let channelId = entry;
-                    let resolvedName: string | undefined = undefined;
-                    let resolvedPfpUrl: string | undefined = undefined;
-                    let needsLookup = true; // Assume lookup is needed by default
+                    const trimmedEntry = entry.trim();
+                    let needsLookup = true; 
+                    let initialData: { id?: string; name?: string; pfpUrl?: string; handle?: string } = {};
+                    let existingStoredDataUsedInStep1 = false;
 
-                    if (entry.startsWith('UC') && entry.length > 20) { // Basic check for existing Channel ID format
-                        channelId = entry; // Ensure channelId is set to the entry if it's an ID
-                        if (currentResolvedMap.has(entry)) {
-                            const existingData = currentResolvedMap.get(entry)!;
-                            if (existingData.name && existingData.pfpUrl) { // Check if name and PFP URL already exist
-                                resolvedName = existingData.name;
-                                resolvedPfpUrl = existingData.pfpUrl;
-                                needsLookup = false; // No lookup needed if we have ID, name, and PFP
-                            }
-                        } // If it's an ID but not in currentResolvedMap, or missing name/pfp, lookup is still needed (needsLookup remains true)
-                    } // If not in ID format, lookup is definitely needed (needsLookup remains true)
+                    // Step 1: Check current component state (sourced from Supabase via store)
+                    if (trimmedEntry.startsWith('UC') && trimmedEntry.length > 20) {
+                        const existing = currentResolvedMapById.get(trimmedEntry);
+                        if (existing?.id && existing.name && (existing.pfpUrl !== undefined) && existing.handle) {
+                            initialData = { ...existing };
+                            needsLookup = false;
+                            existingStoredDataUsedInStep1 = true;
+                        } else {
+                            initialData.id = trimmedEntry; // At least we know the ID
+                            if (existing) initialData = {...initialData, ...existing}; // Use partial existing
+                        }
+                    } else if (trimmedEntry.startsWith('@')) {
+                        const existing = currentResolvedMapByHandle.get(trimmedEntry);
+                        if (existing?.id && existing.name && (existing.pfpUrl !== undefined) && existing.handle) {
+                            initialData = { ...existing };
+                            needsLookup = false;
+                            existingStoredDataUsedInStep1 = true;
+                        } else {
+                            initialData.handle = trimmedEntry; // At least we know the handle
+                             if (existing) initialData = {...initialData, ...existing}; // Use partial existing
+                        }
+                    } else {
+                        // It's a URL or name, will need lookup if token exists.
+                        // Check if this URL/Name somehow resolves to an ID that IS in currentResolvedMapById
+                        // This is less direct, ideally backend handles URL/Name resolution robustly.
+                        // For now, we assume direct ID/Handle match is the primary way to use "cached" data.
+                    }
+
+                    let resolvedDataFromApi: { id?: string; name?: string; pfpUrl?: string; handle?: string } = {};
                     
                     if (needsLookup && token) { 
-                        actualApiLookupsAttempted = true; // Mark that we intended to do a lookup
+                        actualApiLookupsAttempted = true;
                         try {
                             const response = await axios.post(`${BACKEND_API_BASE_URL}/youtube/lookup`, 
-                                { query: entry }, // Use original entry for lookup
+                                { query: trimmedEntry }, 
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                             );
                             if (response.data && response.data.id) {
-                                channelId = response.data.id; // Use resolved ID
-                                resolvedName = response.data.title || response.data.id;
-                                resolvedPfpUrl = response.data.thumbnailUrl || undefined;
+                                resolvedDataFromApi.id = response.data.id;
+                                resolvedDataFromApi.name = response.data.title || undefined;
+                                resolvedDataFromApi.pfpUrl = response.data.thumbnailUrl || undefined; // API might return "" or null
+                                resolvedDataFromApi.handle = response.data.channelHandle || undefined;
                             } else {
                                 unresolvedEntriesExistGlobal = true;
-                                toast({ title: "Resolution Warning", description: `Group '${group.name}': Could not resolve '${entry}'. Kept original/ID.`, variant: "default", duration: 2000 });
+                                toast({ title: "Resolution Warning", description: `Group '${group.name}': API could not resolve '${trimmedEntry}'.`, variant: "default", duration: 2500 });
                             }
                         } catch (error: any) {
                             unresolvedEntriesExistGlobal = true;
                             resolutionErrorsOccurredGlobal = true;
-                            toast({ title: "Resolution Error", description: `Group '${group.name}': Failed to resolve '${entry}'.`, variant: "destructive" });
+                            toast({ title: "Resolution Error", description: `Group '${group.name}': API error resolving '${trimmedEntry}'.`, variant: "destructive" });
                         }
+                    } else if (needsLookup && !token) {
+                        if (!initialData.id && !initialData.handle) { // Was a URL/name and no token
+                             unresolvedEntriesExistGlobal = true;
+                        }
+                        // If it was an ID/Handle, initialData has it, and we can't do better without a token.
                     }
-                    // Ensure channelId is a valid ID at this point if it was resolved
-                    if (channelId.startsWith('UC') && channelId.length > 20) {
-                        newResolvedChannels.push({ id: channelId, name: resolvedName, pfpUrl: resolvedPfpUrl });
-                    } else if (entry.startsWith('UC') && entry.length > 20) {
-                         newResolvedChannels.push({ id: entry }); // If lookup failed but original was an ID
+
+                    // Step 3: Combine data: API > initialData (from current state) > input (for ID/Handle if nothing else)
+                    const finalId = resolvedDataFromApi.id || initialData.id;
+                    
+                    if (finalId) {
+                        if (!newResolvedChannels.some(rc => rc.id === finalId)) {
+                            const channelDataToPush: { id: string; name?: string; pfpUrl?: string; handle?: string } = { id: finalId };
+                            
+                            // Prioritize API, then initial (component state), then nothing (undefined)
+                            const nameToUse = resolvedDataFromApi.name !== undefined ? resolvedDataFromApi.name : initialData.name;
+                            
+                            // pfpUrl: API -> initialData. If API gives "", that's a valid "no pfp". Null is also fine.
+                            let pfpUrlToUse: string | null | undefined = resolvedDataFromApi.pfpUrl !== undefined 
+                                ? (resolvedDataFromApi.pfpUrl === "" ? null : resolvedDataFromApi.pfpUrl) 
+                                : initialData.pfpUrl;
+                                
+                            // handle: API -> initialData -> trimmedEntry (if it was a handle and nothing else found)
+                            let handleToUse = resolvedDataFromApi.handle !== undefined ? resolvedDataFromApi.handle : initialData.handle;
+                            if (handleToUse === undefined && trimmedEntry.startsWith('@') && initialData.handle === trimmedEntry) {
+                                handleToUse = trimmedEntry; // Fallback to input handle if it was one.
+                            }
+
+
+                            if (nameToUse !== undefined) channelDataToPush.name = nameToUse;
+                            if (pfpUrlToUse !== undefined) channelDataToPush.pfpUrl = pfpUrlToUse; // undefined means "not set", null means "no pfp"
+                            if (handleToUse !== undefined) channelDataToPush.handle = handleToUse;
+                            
+                            newResolvedChannels.push(channelDataToPush);
+
+                            // User feedback if essential data (handle) is missing for a known ID
+                            if (finalId.startsWith('UC') && handleToUse === undefined && !existingStoredDataUsedInStep1) {
+                                // If we did an API lookup because it wasn't fully resolved before, and still no handle.
+                                unresolvedEntriesExistGlobal = true; 
+                            }
+                        }
                     } else {
-                        // If entry wasn't an ID and couldn't be resolved to one, it's effectively dropped from resolvedChannels
-                        // but remains in channelIdsString for user to see.
+                        // No finalId means original input wasn't ID/Handle, and API lookup (if attempted) failed to give an ID.
+                        if (!trimmedEntry.startsWith('UC') && !trimmedEntry.startsWith('@')) {
+                           unresolvedEntriesExistGlobal = true; 
+                        }
                     }
                 }
                 updatedChannelGroups[i].resolvedChannels = newResolvedChannels;
-                // Update channelIdsString to reflect only the successfully resolved/validated IDs from newResolvedChannels
-                updatedChannelGroups[i].channelIdsString = newResolvedChannels.map(rc => rc.id).join(', ');
+                // Update channelIdsString to reflect handles if available, else IDs. This is what the user sees.
+                updatedChannelGroups[i].channelIdsString = newResolvedChannels.map(rc => rc.handle || rc.id).join(', ');
             }
             
-            // The channelGroups state already contains the most up-to-date thresholds for each group
-            // as they are updated directly by handleGroupThresholdInputChange/SelectChange.
-            // So, we use updatedChannelGroups (which is a deep copy of channelGroups with resolved IDs) 
-            // directly for storing.
-            setChannelGroups(updatedChannelGroups); // Update state with resolved PFP/name data and cleaned string
+            setChannelGroups(updatedChannelGroups);
 
             const groupsToStore: StoredChannelGroups = {
                 groups: updatedChannelGroups.map(cg => ({
@@ -490,8 +560,13 @@ const AlertPreferences = () => {
                     name: cg.name,
                     icon: cg.icon || '', 
                     notificationsEnabled: cg.notificationsEnabled === undefined ? true : cg.notificationsEnabled,
-                    resolvedChannels: cg.resolvedChannels || [],
-                    thresholds: cg.thresholds || { // Ensure default thresholds if somehow missing
+                    resolvedChannels: cg.resolvedChannels?.map(rc => ({ // Ensure all fields for storage
+                        id: rc.id, 
+                        name: rc.name,
+                        pfpUrl: rc.pfpUrl,
+                        handle: rc.handle
+                    })) || [],
+                    thresholds: cg.thresholds || { 
                         thresholdViews: null,
                         thresholdViewsTimeWindowHours: null,
                         thresholdLikes: null,
@@ -523,8 +598,8 @@ const AlertPreferences = () => {
             } else { // No lookups attempted, or everything was already an ID
                 toast({ title: "Saved Successfully", description: "Your preferences have been saved." });
             }
-        } finally { // <<< ADD FINALLY BLOCK
-            setIsCurrentlySavingAll(false); // <<< RESET LOADING STATE
+        } finally {
+            setIsCurrentlySavingAll(false);
         }
     };
 
@@ -558,7 +633,12 @@ const AlertPreferences = () => {
                 name: cg.name,
                 icon: cg.icon || '', 
                 notificationsEnabled: cg.notificationsEnabled === undefined ? true : cg.notificationsEnabled,
-                resolvedChannels: cg.resolvedChannels || [],
+                resolvedChannels: cg.resolvedChannels?.map(rc => ({
+                    id: rc.id,
+                    name: rc.name,
+                    pfpUrl: rc.pfpUrl,
+                    handle: rc.handle
+                })) || [],
                 thresholds: cg.thresholds // These are now the defaultThresholds
             }))
         };
@@ -689,18 +769,34 @@ const AlertPreferences = () => {
                                      {/* --- NEW: Display PFPs from resolvedChannels --- */}
                                      {group.resolvedChannels && group.resolvedChannels.length > 0 ? (
                                         <div className="mt-2 space-y-1">
-                                            <p className="text-xs text-neutral-400">Linked Channels (PFPs):</p>
-                                            <div className="flex flex-wrap gap-2 items-center min-h-[32px]">
+                                            <p className="text-xs text-neutral-400">Linked Channels (Handles/IDs shown):</p>
+                                            <div className="flex flex-wrap gap-x-3 gap-y-2 items-center min-h-[32px]">
                                                 {group.resolvedChannels.map(rc => {
-                                                    const pfpState = channelPfps[rc.id]; // Still use this for global loading/error state from the secondary fetch effect
+                                                    const pfpState = channelPfps[rc.id] || channelPfps[rc.handle || '']; 
+                                                    const displayName = rc.handle || rc.name || rc.id;
+                                                    
+                                                    // --- MODIFIED: displayPfp logic ---
+                                                    // Prioritize rc.pfpUrl (from DB/saved state). 
+                                                    // Fallback to pfpState.url only if rc.pfpUrl is absent (e.g. during an active fetch).
+                                                    let displayPfp = rc.pfpUrl; 
+                                                    if (!displayPfp && pfpState?.url) {
+                                                        displayPfp = pfpState.url;
+                                                    }
+                                                    // --- END MODIFIED ---
+
                                                     if (pfpState?.isLoading) {
                                                         return <Loader2 key={`pfp-loader-${rc.id}`} className="w-8 h-8 text-neutral-500 animate-spin" />;
                                                     }
-                                                    if (rc.pfpUrl) {
-                                                        return <img key={`pfp-${rc.id}`} src={rc.pfpUrl} alt={rc.name || rc.id} title={rc.name || rc.id} className="w-8 h-8 rounded-full border border-neutral-500 object-cover" />;
-                                                    }
-                                                    // Fallback if pfpUrl is not in resolvedChannels or if secondary fetch errored
-                                                    return <img key={`pfp-fallback-${rc.id}`} src={generateFallbackAvatar(rc.name || rc.id.substring(0,2))} alt={`Fallback for ${rc.id}`} title={rc.name || rc.id} className="w-8 h-8 rounded-full border border-neutral-600" />;
+                                                    return (
+                                                        <div key={rc.id} className="flex items-center gap-1.5 bg-neutral-600/30 pr-2 rounded-full text-xs" title={`${rc.name || 'Channel'} (${rc.id})`}>
+                                                            <img 
+                                                                src={displayPfp || generateFallbackAvatar(displayName)} 
+                                                                alt={displayName} 
+                                                                className="w-6 h-6 rounded-full border border-neutral-500 object-cover"
+                                                            />
+                                                            <span className="text-neutral-300">{rc.handle || rc.id}</span>
+                                                        </div>
+                                                    );
                                                 })}
                                             </div>
                                         </div>
