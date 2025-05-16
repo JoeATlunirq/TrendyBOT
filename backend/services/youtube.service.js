@@ -373,7 +373,7 @@ class YoutubeService {
 
     // Modified to accept ONLY a valid, confirmed @handle for the ViewStats attempt.
     async fetchViewStatsChannelData(actualValidHandle, actualChannelId, range) {
-        const vsRange = convertToViewStatsRange(range); // Keep this to get the numeric/alltime range
+        const vsRange = convertToViewStatsRange(range); // This can still be used for other logic if needed
 
         // NEW: Construct URL for your proxy
         const proxyBaseUrl = process.env.VIEWSTATS_PROXY_URL;
@@ -386,8 +386,8 @@ class YoutubeService {
             throw error;
         }
 
-        // Pass actualValidHandle (e.g., "@handle") and vsRange (e.g., "28", "alltime") to your proxy
-        const proxyUrl = `${proxyBaseUrl}?handle=${encodeURIComponent(actualValidHandle)}&range=${vsRange}`;
+        // Pass actualValidHandle (e.g., "@handle") and the ORIGINAL range (e.g., "28d") to your proxy
+        const proxyUrl = `${proxyBaseUrl}?handle=${encodeURIComponent(actualValidHandle)}&range=${encodeURIComponent(range)}`;
         
         console.log(`[VS_SVC] Attempting ViewStats via Proxy (axios) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. Proxy URL: ${proxyUrl}`);
 
