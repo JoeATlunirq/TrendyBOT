@@ -377,13 +377,14 @@ class YoutubeService {
         const vsRange = convertToViewStatsRange(range);
         const viewStatsUrl = `https://api.viewstats.com/channels/${encodeURIComponent(actualValidHandle)}/stats?range=${vsRange}&groupBy=daily&sortOrder=ASC&withRevenue=true&withEvents=true&withBreakdown=false&withToday=false`;
         
-        console.log(`[VS_SVC] Attempting ViewStats (axios) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
+        console.log(`[VS_SVC] Attempting ViewStats (axios, identity) for handle: ${actualValidHandle} (Original ID: ${actualChannelId}), Range: ${range}. URL: ${viewStatsUrl.replace(VIEWSTATS_BEARER_TOKEN, "[TOKEN_REDACTED]")}`);
 
         try {
             const response = await axios.get(viewStatsUrl, {
                 headers: {
                     'Authorization': `Bearer ${VIEWSTATS_BEARER_TOKEN}`,
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Encoding': 'identity' // Request uncompressed content
                 },
                 responseType: 'arraybuffer' // Crucial for getting the response as an ArrayBuffer
             });
@@ -414,28 +415,9 @@ class YoutubeService {
             // For axios with arraybuffer, response.data is the ArrayBuffer
             const encryptedBuffer = response.data; 
 
-            // --- Logging for encryptedBuffer (already exists from previous step) ---
-            console.log(`[VS_DECRYPT] Encrypted buffer length: ${encryptedBuffer.byteLength}`);
-            const firstBytes = new Uint8Array(encryptedBuffer.slice(0, 16));
-            const firstBytesHex = Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-            console.log(`[VS_DECRYPT] Encrypted buffer first 16 bytes (hex): ${firstBytesHex}`);
-            // --- END LOGGING ---
+            // Logging for encryptedBuffer is now only in decryptViewStatsResponse
 
-            // Pass the buffer directly to decryptViewStatsResponse (assuming it's modified to accept buffer)
-            // OR, mimic the structure decryptViewStatsResponse expects if it needs a response-like object.
-            // For simplicity, let's assume decryptViewStatsResponse is adapted or we pass the buffer.
-            // The current decryptViewStatsResponse takes a `response` object and calls `response.arrayBuffer()`.
-            // We need to adapt that or this. Let's adapt decryptViewStatsResponse.
-
-            // We need to pass the ArrayBuffer directly to the decryption logic.
-            // The original decryptViewStatsResponse calls response.arrayBuffer(). We now have the buffer.
-            // For now, I'll keep the decryptViewStatsResponse signature and create a mock response object here.
-            // A better solution would be to refactor decryptViewStatsResponse to accept an ArrayBuffer directly.
-            const mockResponseForDecryption = {
-                arrayBuffer: async () => encryptedBuffer // Simulate the arrayBuffer method
-            };
-
-            const decryptedData = await decryptViewStatsResponse(mockResponseForDecryption);
+            const decryptedData = await decryptViewStatsResponse({ arrayBuffer: async () => encryptedBuffer });
 
             if (!decryptedData || !decryptedData.data || !Array.isArray(decryptedData.data)) {
                 console.warn('[VS_SVC] Decrypted ViewStats data is not in expected format or data array is missing for:', actualValidHandle);
